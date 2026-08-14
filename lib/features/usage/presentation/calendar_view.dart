@@ -503,6 +503,8 @@ class _DayInspector extends StatelessWidget {
                       children: [
                         Text(
                           formatFullDate(day),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.titleLarge,
                         ),
                         const SizedBox(height: 2),
@@ -510,6 +512,8 @@ class _DayInspector extends StatelessWidget {
                           accounts.isEmpty
                               ? 'Sin actividad registrada'
                               : '${accounts.length} ${accounts.length == 1 ? 'cuenta activa' : 'cuentas activas'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),

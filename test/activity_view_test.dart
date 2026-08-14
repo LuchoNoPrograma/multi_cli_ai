@@ -13,6 +13,7 @@ import 'package:multi_cli_ai/features/activity/presentation/activity_view.dart';
 import 'package:multi_cli_ai/features/profiles/data/multi_cli_gateway.dart';
 import 'package:multi_cli_ai/features/profiles/data/profile_discovery_service.dart';
 import 'package:multi_cli_ai/features/usage/data/usage_refresh_service.dart';
+import 'package:multi_cli_ai/features/workspaces/data/workspace_repository.dart';
 import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 
 void main() {
@@ -116,6 +117,7 @@ DashboardController _controller(AppDatabase database) {
     discovery: ProfileDiscoveryService(database),
     multiCli: MultiCliGateway(database, runner),
     accountsRepository: AccountRepository(database),
+    workspaceRepository: WorkspaceRepository(database),
     usage: UsageRefreshService(
       database: database,
       client: const CodexAppServerClient(),

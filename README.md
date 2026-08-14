@@ -106,10 +106,13 @@ Nota: cuenta comprada juntos el 16 de julio
 9. Registrar con quién se comparte el costo y los aportes pendientes.
 10. Lanzar el perfil seleccionado con su `CODEX_HOME` correspondiente.
 
-Al abrir Codex, la aplicación ofrece únicamente `Abrir en Inicio` y
-`Elegir carpeta`. La segunda opción usa el selector nativo de Linux o Windows.
-La ruta elegida se usa como directorio de trabajo para esa apertura y no se
-guarda como carpeta reciente ni como preferencia.
+Los directorios de trabajo se guardan como workspaces globales, independientes
+de las cuentas. El último workspace seleccionado queda activo para todos los
+perfiles, incluidos los que se creen después. La acción superior **Lanzar
+agente** permite buscar el historial por nombre o ruta, seleccionar, añadir,
+renombrar y olvidar workspaces sin modificar las carpetas del sistema, y después
+elegir la cuenta que se ejecutará allí. Las cards se reservan para administrar
+el estado y la cuota de cada cuenta.
 
 ### Conveniente después del primer flujo usable
 

@@ -146,6 +146,19 @@ class CommandLogs extends Table {
   Set<Column<Object>> get primaryKey => {id};
 }
 
+class Workspaces extends Table {
+  TextColumn get id => text()();
+  TextColumn get path => text()();
+  TextColumn get pathKey => text().unique()();
+  TextColumn get name => text()();
+  IntColumn get openCount => integer().withDefault(const Constant(0))();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get lastUsedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+}
+
 class AppSettings extends Table {
   TextColumn get settingKey => text()();
   TextColumn get settingValue => text()();
@@ -165,6 +178,7 @@ class AppSettings extends Table {
     ResetCreditSnapshots,
     DailyUsageBuckets,
     CommandLogs,
+    Workspaces,
     AppSettings,
   ],
 )
@@ -180,11 +194,14 @@ class AppDatabase extends _$AppDatabase {
   );
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (migrator) async => migrator.createAll(),
+    onUpgrade: (migrator, from, to) async {
+      if (from < 2) await migrator.createTable(workspaces);
+    },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
       await customStatement('PRAGMA journal_mode = WAL');

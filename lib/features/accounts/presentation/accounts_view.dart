@@ -1,6 +1,3 @@
-import 'dart:async';
-
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +10,7 @@ import 'package:multi_cli_ai/features/accounts/domain/account_models.dart';
 import 'package:multi_cli_ai/features/accounts/presentation/account_dialogs.dart';
 import 'package:multi_cli_ai/features/profiles/domain/profile_provider.dart';
 import 'package:multi_cli_ai/features/profiles/presentation/profile_provider_icon.dart';
+import 'package:multi_cli_ai/features/workspaces/presentation/launch_agent_dialog.dart';
 
 export 'package:multi_cli_ai/features/accounts/presentation/account_dialogs.dart'
     show showCreateProfileDialog;
@@ -58,14 +56,15 @@ class AccountsView extends ConsumerWidget {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '${controller.accounts.length} perfiles',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
                   FilledButton.icon(
+                    onPressed: controller.accounts.isEmpty
+                        ? null
+                        : () => showLaunchAgentDialog(context, controller),
+                    icon: const Icon(Icons.terminal_rounded, size: 18),
+                    label: const Text('Lanzar agente'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
                     onPressed: () =>
                         showCreateProfileDialog(context, controller),
                     icon: const Icon(Icons.add, size: 18),
@@ -368,23 +367,6 @@ class _AccountCardState extends State<AccountCard> {
     }
   }
 
-  Future<void> _launchAt(
-    AccountCardData account,
-    _LaunchDestination destination,
-  ) async {
-    final home = widget.controller.userHomeDirectory;
-    final directory = switch (destination) {
-      _LaunchDestination.home => home,
-      _LaunchDestination.choose => await getDirectoryPath(
-        initialDirectory: home,
-        confirmButtonText: 'Abrir aquí',
-        canCreateDirectories: true,
-      ),
-    };
-    if (directory == null) return;
-    await widget.controller.launchProfile(account, workingDirectory: directory);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -619,65 +601,7 @@ class _AccountCardState extends State<AccountCard> {
             Row(
               children: [
                 Expanded(child: _BillingLine(account: account)),
-                if (account.profile.hasAuthFile || !provider.supportsDeviceAuth)
-                  SizedBox(
-                    width: 38,
-                    height: 38,
-                    child: PopupMenuButton<_LaunchDestination>(
-                      tooltip: 'Abrir ${provider.productName}',
-                      icon: Icon(
-                        Icons.terminal_rounded,
-                        size: 18,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      iconSize: 18,
-                      padding: EdgeInsets.zero,
-                      position: PopupMenuPosition.under,
-                      menuPadding: const EdgeInsets.symmetric(vertical: 4),
-                      constraints: const BoxConstraints.tightFor(width: 184),
-                      onSelected: (destination) =>
-                          unawaited(_guard(_launchAt(account, destination))),
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: _LaunchDestination.home,
-                          height: 38,
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            children: [
-                              Icon(Icons.home_outlined, size: 15),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Abrir en Inicio',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: _LaunchDestination.choose,
-                          height: 38,
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            children: [
-                              Icon(Icons.folder_open_outlined, size: 15),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Elegir carpeta…',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                else
+                if (!account.profile.hasAuthFile && provider.supportsDeviceAuth)
                   AppIconButton(
                     icon: Icons.link,
                     tooltip: 'Vincular cuenta',
@@ -714,8 +638,6 @@ class _AccountCardState extends State<AccountCard> {
     );
   }
 }
-
-enum _LaunchDestination { home, choose }
 
 class _StateLine extends StatelessWidget {
   const _StateLine({

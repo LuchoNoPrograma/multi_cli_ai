@@ -24,6 +24,7 @@ import 'package:multi_cli_ai/features/profiles/data/profile_discovery_service.da
 import 'package:multi_cli_ai/features/profiles/domain/profile_provider.dart';
 import 'package:multi_cli_ai/features/usage/data/usage_refresh_service.dart';
 import 'package:multi_cli_ai/features/usage/presentation/calendar_view.dart';
+import 'package:multi_cli_ai/features/workspaces/data/workspace_repository.dart';
 import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 
 void main() {
@@ -154,6 +155,40 @@ void main() {
       );
     },
   );
+
+  test('workspace history is global, normalized, and ordered by use', () async {
+    final root = await Directory.systemTemp.createTemp('multicli-workspaces-');
+    addTearDown(() => root.delete(recursive: true));
+    final first = Directory('${root.path}/multi_cli_ai');
+    final second = Directory('${root.path}/parla');
+    await first.create();
+    await second.create();
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = WorkspaceRepository(database);
+
+    final initial = await repository.add('${first.path}/.');
+    await repository.recordOpened(first.path);
+    await repository.recordOpened('${first.path}/.');
+    final recent = await repository.add(second.path);
+
+    var workspaces = await repository.loadWorkspaces();
+    expect(workspaces, hasLength(2));
+    expect(workspaces.first.id, recent.id);
+    expect(
+      workspaces.singleWhere((item) => item.id == initial.id).openCount,
+      2,
+    );
+
+    await repository.select(initial.id);
+    await repository.rename(initial.id, 'Multi CLI AI');
+    workspaces = await repository.loadWorkspaces();
+    expect(workspaces.first.id, initial.id);
+    expect(workspaces.first.name, 'Multi CLI AI');
+
+    await repository.remove(recent.id);
+    expect(await repository.loadWorkspaces(), hasLength(1));
+  });
 
   test('terminal arguments preserve native working directories', () {
     const project = '/home/nini/StudioProjects/bora asai';
@@ -463,6 +498,7 @@ void main() {
       discovery: ProfileDiscoveryService(database),
       multiCli: MultiCliGateway(database, runner),
       accountsRepository: AccountRepository(database),
+      workspaceRepository: WorkspaceRepository(database),
       usage: UsageRefreshService(
         database: database,
         client: const CodexAppServerClient(),
@@ -555,6 +591,7 @@ void main() {
       discovery: ProfileDiscoveryService(database),
       multiCli: MultiCliGateway(database, runner),
       accountsRepository: AccountRepository(database),
+      workspaceRepository: WorkspaceRepository(database),
       usage: UsageRefreshService(
         database: database,
         client: const CodexAppServerClient(),
@@ -616,7 +653,6 @@ void main() {
       lastSuccessfulWindows: const [],
       resetCredits: null,
     );
-
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark('cyan'),
@@ -694,14 +730,8 @@ void main() {
     await tester.tapAt(const Offset(4, 4));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Abrir Codex'));
-    await tester.pumpAndSettle();
-    expect(find.text('Abrir en Inicio'), findsOneWidget);
-    expect(find.text('Elegir carpeta…'), findsOneWidget);
-    expect(find.textContaining('última'), findsNothing);
-    expect(find.textContaining('reciente'), findsNothing);
-    await tester.tapAt(const Offset(4, 4));
-    await tester.pumpAndSettle();
+    expect(find.byTooltip('Elegir destino'), findsNothing);
+    expect(find.byIcon(Icons.terminal_rounded), findsNothing);
 
     await tester.binding.setSurfaceSize(const Size(900, 620));
     await tester.pumpAndSettle();
@@ -786,6 +816,157 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('agent launcher keeps workspaces separate from accounts', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 620));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final runner = ProcessRunner(database);
+    final controller = DashboardController(
+      database: database,
+      discovery: ProfileDiscoveryService(database),
+      multiCli: MultiCliGateway(database, runner),
+      accountsRepository: AccountRepository(database),
+      workspaceRepository: WorkspaceRepository(database),
+      usage: UsageRefreshService(
+        database: database,
+        client: const CodexAppServerClient(),
+        runner: runner,
+      ),
+      runner: runner,
+    )..initialized = true;
+    final now = DateTime(2026, 8, 14);
+    final account = AccountCardData(
+      profile: CliProfile(
+        id: 'ari',
+        toolKey: 'codex',
+        profileName: 'ari',
+        commandName: 'codex-ari',
+        displayName: 'Ari',
+        profileHome: '/tmp/ari',
+        profileSource: 'multicli',
+        profileType: 'full',
+        hasAuthFile: true,
+        isAvailable: true,
+        isFavorite: false,
+        createdAt: now,
+        lastDiscoveredAt: now,
+      ),
+      metadata: null,
+      costShares: const [],
+      currentCheck: null,
+      currentWindows: const [],
+      lastSuccessfulCheck: null,
+      lastSuccessfulWindows: const [],
+      resetCredits: null,
+    );
+    controller
+      ..accounts = [account]
+      ..selectedProfileId = account.profile.id
+      ..workspaces = [
+        Workspace(
+          id: 'workspace',
+          path: '/home/nini/StudioProjects/multi_cli_ai',
+          pathKey: '/home/nini/StudioProjects/multi_cli_ai',
+          name: 'multi_cli_ai',
+          openCount: 3,
+          createdAt: now,
+          lastUsedAt: now,
+        ),
+        Workspace(
+          id: 'workspace-2',
+          path: '/home/nini/StudioProjects/parla',
+          pathKey: '/home/nini/StudioProjects/parla',
+          name: 'parla',
+          openCount: 2,
+          createdAt: now,
+          lastUsedAt: now.subtract(const Duration(minutes: 5)),
+        ),
+        Workspace(
+          id: 'workspace-3',
+          path: '/home/nini/StudioProjects/bora_asai',
+          pathKey: '/home/nini/StudioProjects/bora_asai',
+          name: 'bora_asai',
+          openCount: 1,
+          createdAt: now,
+          lastUsedAt: now.subtract(const Duration(minutes: 10)),
+        ),
+        Workspace(
+          id: 'workspace-4',
+          path: '/home/nini/StudioProjects/archivo',
+          pathKey: '/home/nini/StudioProjects/archivo',
+          name: 'archivo',
+          openCount: 1,
+          createdAt: now,
+          lastUsedAt: now.subtract(const Duration(minutes: 15)),
+        ),
+      ]
+      ..currentWorkspaceId = 'workspace';
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardControllerProvider.overrideWith((ref) => controller),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.dark('cyan'),
+          home: const Scaffold(body: AccountsView()),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Workspaces recientes'), findsNothing);
+    expect(find.text('multi_cli_ai'), findsNothing);
+    expect(find.text('3 de 4'), findsNothing);
+    expect(find.text('parla'), findsNothing);
+    expect(find.text('bora_asai'), findsNothing);
+    expect(find.text('archivo'), findsNothing);
+    expect(find.byTooltip('Elegir destino'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Lanzar agente').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Workspaces'), findsOneWidget);
+    expect(find.text('Cuenta para lanzar'), findsOneWidget);
+    expect(find.text('multi_cli_ai'), findsOneWidget);
+    expect(find.byKey(const Key('launch-workspace-search')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('launch-workspace-search')),
+      'archivo',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('archivo'), findsNWidgets(2));
+    expect(find.text('multi_cli_ai'), findsNothing);
+    expect(find.text('parla'), findsNothing);
+    expect(find.text('Ari'), findsNWidgets(2));
+    expect(find.text('Abrir en Inicio'), findsNothing);
+    expect(
+      tester
+          .widget<ListView>(find.byKey(const Key('launch-workspace-list')))
+          .scrollDirection,
+      Axis.vertical,
+    );
+    var launchButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Lanzar agente').last,
+    );
+    expect(launchButton.onPressed, isNull);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('launch-workspace-list')),
+        matching: find.text('archivo'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    launchButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Lanzar agente').last,
+    );
+    expect(launchButton.onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('calendar lays out at the minimum desktop size', (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 620));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -798,6 +979,7 @@ void main() {
             discovery: ProfileDiscoveryService(database),
             multiCli: MultiCliGateway(database, runner),
             accountsRepository: AccountRepository(database),
+            workspaceRepository: WorkspaceRepository(database),
             usage: UsageRefreshService(
               database: database,
               client: const CodexAppServerClient(),

@@ -9,6 +9,7 @@ import 'package:multi_cli_ai/features/profiles/data/multi_cli_gateway.dart';
 import 'package:multi_cli_ai/features/profiles/data/profile_discovery_service.dart';
 import 'package:multi_cli_ai/features/profiles/domain/profile_provider.dart';
 import 'package:multi_cli_ai/features/usage/data/usage_refresh_service.dart';
+import 'package:multi_cli_ai/features/workspaces/data/workspace_repository.dart';
 import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 
 enum AppSection { accounts, calendar, activity }
@@ -19,6 +20,7 @@ class DashboardController extends ChangeNotifier {
     required this.discovery,
     required this.multiCli,
     required this.accountsRepository,
+    required this.workspaceRepository,
     required this.usage,
     required this.runner,
   });
@@ -27,6 +29,7 @@ class DashboardController extends ChangeNotifier {
   final ProfileDiscoveryService discovery;
   final MultiCliGateway multiCli;
   final AccountRepository accountsRepository;
+  final WorkspaceRepository workspaceRepository;
   final UsageRefreshService usage;
   final ProcessRunner runner;
 
@@ -35,12 +38,14 @@ class DashboardController extends ChangeNotifier {
   String? fatalError;
   List<AccountCardData> accounts = const [];
   List<CommandLog> logs = const [];
+  List<Workspace> workspaces = const [];
   Map<DateTime, CalendarDayData> calendar = const {};
   Set<String> refreshing = <String>{};
   AppSection section = AppSection.accounts;
   String query = '';
   String statusFilter = 'all';
   String? selectedProfileId;
+  String? currentWorkspaceId;
   DateTime selectedDay = DateTime.now();
   int concurrency = 3;
   int timeoutSeconds = 15;
@@ -83,6 +88,13 @@ class DashboardController extends ChangeNotifier {
     return accounts.firstOrNull;
   }
 
+  Workspace? get currentWorkspace {
+    for (final workspace in workspaces) {
+      if (workspace.id == currentWorkspaceId) return workspace;
+    }
+    return workspaces.firstOrNull;
+  }
+
   Future<void> initialize() async {
     if (loading) return;
     loading = true;
@@ -107,8 +119,13 @@ class DashboardController extends ChangeNotifier {
   Future<void> reload() async {
     accounts = await accountsRepository.loadAccounts();
     logs = await accountsRepository.loadLogs();
+    workspaces = await workspaceRepository.loadWorkspaces();
     calendar = await accountsRepository.loadCalendar();
     selectedProfileId ??= accounts.firstOrNull?.profile.id;
+    if (currentWorkspaceId == null ||
+        !workspaces.any((workspace) => workspace.id == currentWorkspaceId)) {
+      currentWorkspaceId = workspaces.firstOrNull?.id;
+    }
     notifyListeners();
   }
 
@@ -183,9 +200,53 @@ class DashboardController extends ChangeNotifier {
   Future<void> launchProfile(
     AccountCardData account, {
     required String workingDirectory,
+    bool rememberWorkspace = true,
   }) async {
     await multiCli.launch(account.profile, workingDirectory: workingDirectory);
+    if (rememberWorkspace) {
+      final workspace = await workspaceRepository.recordOpened(
+        workingDirectory,
+      );
+      currentWorkspaceId = workspace.id;
+      await database.saveSetting('current_workspace_id', workspace.id);
+    }
     await reload();
+  }
+
+  Future<Workspace> addWorkspace(String path) async {
+    final workspace = await workspaceRepository.add(path);
+    currentWorkspaceId = workspace.id;
+    await database.saveSetting('current_workspace_id', workspace.id);
+    workspaces = await workspaceRepository.loadWorkspaces();
+    notifyListeners();
+    return workspace;
+  }
+
+  Future<void> selectWorkspace(Workspace workspace) async {
+    await workspaceRepository.select(workspace.id);
+    currentWorkspaceId = workspace.id;
+    await database.saveSetting('current_workspace_id', workspace.id);
+    workspaces = await workspaceRepository.loadWorkspaces();
+    notifyListeners();
+  }
+
+  Future<void> renameWorkspace(Workspace workspace, String name) async {
+    await workspaceRepository.rename(workspace.id, name);
+    workspaces = await workspaceRepository.loadWorkspaces();
+    notifyListeners();
+  }
+
+  Future<void> forgetWorkspace(Workspace workspace) async {
+    await workspaceRepository.remove(workspace.id);
+    workspaces = await workspaceRepository.loadWorkspaces();
+    if (currentWorkspaceId == workspace.id) {
+      currentWorkspaceId = workspaces.firstOrNull?.id;
+      await database.saveSetting(
+        'current_workspace_id',
+        currentWorkspaceId ?? '',
+      );
+    }
+    notifyListeners();
   }
 
   Future<void> saveProfile({
@@ -340,5 +401,9 @@ class DashboardController extends ChangeNotifier {
     timeoutSeconds =
         int.tryParse(await database.setting('timeout_seconds') ?? '') ?? 15;
     compactCards = (await database.setting('compact_cards')) == 'true';
+    final storedWorkspace = await database.setting('current_workspace_id');
+    currentWorkspaceId = storedWorkspace?.trim().isEmpty == false
+        ? storedWorkspace
+        : null;
   }
 }
