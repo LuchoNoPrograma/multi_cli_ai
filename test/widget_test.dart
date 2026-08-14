@@ -696,8 +696,26 @@ void main() {
       lastSuccessfulWindows: const [],
       resetCredits: null,
     );
+    final fillerAccounts = List.generate(
+      8,
+      (index) => AccountCardData(
+        profile: account.profile.copyWith(
+          id: 'filler-$index',
+          profileName: 'filler-$index',
+          displayName: 'Cuenta $index',
+          profileHome: '/tmp/filler-$index',
+        ),
+        metadata: null,
+        costShares: const [],
+        currentCheck: null,
+        currentWindows: const [],
+        lastSuccessfulCheck: null,
+        lastSuccessfulWindows: const [],
+        resetCredits: null,
+      ),
+    );
     controller
-      ..accounts = [otherAccount, account]
+      ..accounts = [otherAccount, ...fillerAccounts, account]
       ..selectedProfileId = otherAccount.profile.id
       ..workspaces = [
         Workspace(
@@ -737,6 +755,13 @@ void main() {
     expect(find.text('Límite semanal'), findsOneWidget);
     expect(find.text('93% disponible'), findsOneWidget);
     expect(find.byTooltip('Lanzar agente con Ari'), findsOneWidget);
+    final terminalRect = tester.getRect(
+      find.byTooltip('Lanzar agente con Ari'),
+    );
+    final refreshRect = tester.getRect(
+      find.byTooltip('Consultar sólo esta cuenta'),
+    );
+    expect(terminalRect.right, lessThanOrEqualTo(refreshRect.left));
     expect(
       tester
           .widget<Icon>(
@@ -797,17 +822,16 @@ void main() {
     await tester.tap(find.byTooltip('Lanzar agente con Ari'));
     await tester.pumpAndSettle();
     final ariPicker = find.byKey(const ValueKey('launch-account-ari'));
-    final solPicker = find.byKey(const ValueKey('launch-account-sol'));
     expect(
       find.descendant(of: ariPicker, matching: find.byIcon(Icons.check_circle)),
       findsOneWidget,
     );
     expect(
-      find.descendant(
-        of: solPicker,
-        matching: find.byIcon(Icons.radio_button_unchecked),
-      ),
-      findsOneWidget,
+      tester
+          .widget<GridView>(find.byKey(const Key('launch-account-list')))
+          .controller!
+          .offset,
+      greaterThan(0),
     );
     expect(
       find.descendant(of: ariPicker, matching: find.text('88% disponible')),

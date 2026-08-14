@@ -480,21 +480,6 @@ class _AccountCardState extends State<AccountCard> {
                   ),
                 ),
                 AppIconButton(
-                  icon: Icons.terminal_rounded,
-                  tooltip: 'Lanzar agente con ${account.profile.displayName}',
-                  color: launchable
-                      ? theme.colorScheme.primary
-                      : theme.disabledColor,
-                  onPressed: launchable
-                      ? () => showLaunchAgentDialog(
-                          context,
-                          widget.controller,
-                          initialProfileId: account.profile.id,
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 2),
-                AppIconButton(
                   icon: Icons.edit_outlined,
                   tooltip: 'Editar perfil',
                   onPressed: () => showEditAccountDialog(
@@ -627,6 +612,20 @@ class _AccountCardState extends State<AccountCard> {
                       account,
                     ),
                   ),
+                AppIconButton(
+                  icon: Icons.terminal_rounded,
+                  tooltip: 'Lanzar agente con ${account.profile.displayName}',
+                  color: launchable
+                      ? theme.colorScheme.primary
+                      : theme.disabledColor,
+                  onPressed: launchable
+                      ? () => showLaunchAgentDialog(
+                          context,
+                          widget.controller,
+                          initialProfileId: account.profile.id,
+                        )
+                      : null,
+                ),
                 if (widget.refreshing && provider.supportsUsage)
                   const SizedBox(
                     width: 38,

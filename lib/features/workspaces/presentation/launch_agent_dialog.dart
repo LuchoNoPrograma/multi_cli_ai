@@ -378,7 +378,7 @@ class _WorkspacePickerPanel extends StatelessWidget {
   }
 }
 
-class _AccountPickerPanel extends StatelessWidget {
+class _AccountPickerPanel extends StatefulWidget {
   const _AccountPickerPanel({
     required this.accounts,
     required this.selectedId,
@@ -388,6 +388,72 @@ class _AccountPickerPanel extends StatelessWidget {
   final List<AccountCardData> accounts;
   final String? selectedId;
   final ValueChanged<AccountCardData> onSelected;
+
+  @override
+  State<_AccountPickerPanel> createState() => _AccountPickerPanelState();
+}
+
+class _AccountPickerPanelState extends State<_AccountPickerPanel> {
+  static const itemExtent = 84.0;
+  static const itemSpacing = 2.0;
+  static const gridPadding = 5.0;
+
+  final scrollController = ScrollController();
+  String? scrolledSelectionId;
+  int? scrolledColumnCount;
+
+  @override
+  void didUpdateWidget(covariant _AccountPickerPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.accounts, widget.accounts)) {
+      scrolledSelectionId = null;
+    }
+  }
+
+  void _scrollToSelection(int columnCount) {
+    final selectedId = widget.selectedId;
+    if (selectedId == null ||
+        (scrolledSelectionId == selectedId &&
+            scrolledColumnCount == columnCount)) {
+      return;
+    }
+    final index = widget.accounts.indexWhere(
+      (account) => account.profile.id == selectedId,
+    );
+    if (index < 0) return;
+    scrolledSelectionId = selectedId;
+    scrolledColumnCount = columnCount;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.selectedId != selectedId ||
+          !scrollController.hasClients) {
+        return;
+      }
+      final position = scrollController.position;
+      final itemStart =
+          gridPadding + (index ~/ columnCount) * (itemExtent + itemSpacing);
+      final itemEnd = itemStart + itemExtent;
+      final viewportStart = position.pixels;
+      final viewportEnd = viewportStart + position.viewportDimension;
+      if (itemStart >= viewportStart && itemEnd <= viewportEnd) return;
+      final centered =
+          itemStart - (position.viewportDimension - itemExtent) / 2;
+      final target = centered
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -411,7 +477,7 @@ class _AccountPickerPanel extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${accounts.length}',
+                  '${widget.accounts.length}',
                   style: theme.textTheme.labelMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -422,44 +488,53 @@ class _AccountPickerPanel extends StatelessWidget {
           ),
           Divider(height: 1, color: theme.colorScheme.outline),
           Expanded(
-            child: accounts.isEmpty
+            child: widget.accounts.isEmpty
                 ? const Center(child: Text('Sin cuentas disponibles'))
                 : LayoutBuilder(
-                    builder: (context, constraints) => GridView.builder(
-                      padding: const EdgeInsets.all(5),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: constraints.maxWidth >= 620 ? 2 : 1,
-                        mainAxisExtent: 84,
-                        crossAxisSpacing: 2,
-                        mainAxisSpacing: 2,
-                      ),
-                      itemCount: accounts.length,
-                      itemBuilder: (context, index) {
-                        final account = accounts[index];
-                        final enabled = canLaunchAccount(account);
-                        final selected = account.profile.id == selectedId;
-                        final provider = profileProvider(
-                          account.profile.toolKey,
-                        );
-                        return Opacity(
-                          opacity: enabled ? 1 : .46,
-                          child: _PickerRow(
-                            key: ValueKey(
-                              'launch-account-${account.profile.id}',
+                    builder: (context, constraints) {
+                      final columnCount = constraints.maxWidth >= 620 ? 2 : 1;
+                      _scrollToSelection(columnCount);
+                      return GridView.builder(
+                        key: const Key('launch-account-list'),
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(gridPadding),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columnCount,
+                          mainAxisExtent: itemExtent,
+                          crossAxisSpacing: itemSpacing,
+                          mainAxisSpacing: itemSpacing,
+                        ),
+                        itemCount: widget.accounts.length,
+                        itemBuilder: (context, index) {
+                          final account = widget.accounts[index];
+                          final enabled = canLaunchAccount(account);
+                          final selected =
+                              account.profile.id == widget.selectedId;
+                          final provider = profileProvider(
+                            account.profile.toolKey,
+                          );
+                          return Opacity(
+                            opacity: enabled ? 1 : .46,
+                            child: _PickerRow(
+                              key: ValueKey(
+                                'launch-account-${account.profile.id}',
+                              ),
+                              selected: selected,
+                              onTap: enabled
+                                  ? () => widget.onSelected(account)
+                                  : null,
+                              leading: ProfileProviderIcon(
+                                toolKey: account.profile.toolKey,
+                                size: 24,
+                              ),
+                              title: account.profile.displayName,
+                              subtitle: _accountSubtitle(account, provider),
+                              footer: _LaunchAvailability(account: account),
                             ),
-                            selected: selected,
-                            onTap: enabled ? () => onSelected(account) : null,
-                            leading: ProfileProviderIcon(
-                              toolKey: account.profile.toolKey,
-                              size: 24,
-                            ),
-                            title: account.profile.displayName,
-                            subtitle: _accountSubtitle(account, provider),
-                            footer: _LaunchAvailability(account: account),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      );
+                    },
                   ),
           ),
         ],
