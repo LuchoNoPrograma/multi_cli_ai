@@ -14,6 +14,47 @@ import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 
 enum AppSection { accounts, calendar, activity }
 
+enum StartupFailureKind { updateRequired, unexpected }
+
+class StartupFailure {
+  const StartupFailure({
+    required this.kind,
+    required this.title,
+    required this.message,
+  });
+
+  factory StartupFailure.from(Object error) {
+    final details = ProcessRunner.sanitizeOutput(error.toString());
+    final normalized = details.toLowerCase();
+    final needsDatabaseMigration =
+        normalized.contains('bumped the schema version') &&
+        (normalized.contains('migration') ||
+            normalized.contains('schema updates'));
+
+    if (needsDatabaseMigration) {
+      return const StartupFailure(
+        kind: StartupFailureKind.updateRequired,
+        title: 'Ejecutable desactualizado',
+        message:
+            'Este ejecutable no incluye la actualización necesaria para abrir '
+            'tu base de datos local. Instala la versión más reciente de '
+            'MultiCLI AI y vuelve a abrir la aplicación. Tus datos se '
+            'conservarán.',
+      );
+    }
+
+    return StartupFailure(
+      kind: StartupFailureKind.unexpected,
+      title: 'No se pudo iniciar',
+      message: details,
+    );
+  }
+
+  final StartupFailureKind kind;
+  final String title;
+  final String message;
+}
+
 class DashboardController extends ChangeNotifier {
   DashboardController({
     required this.database,
@@ -35,7 +76,7 @@ class DashboardController extends ChangeNotifier {
 
   bool initialized = false;
   bool loading = false;
-  String? fatalError;
+  StartupFailure? fatalError;
   List<AccountCardData> accounts = const [];
   List<CommandLog> logs = const [];
   List<Workspace> workspaces = const [];
@@ -109,7 +150,7 @@ class DashboardController extends ChangeNotifier {
       initialized = true;
       fatalError = null;
     } catch (error) {
-      fatalError = ProcessRunner.sanitizeOutput(error.toString());
+      fatalError = StartupFailure.from(error);
     } finally {
       loading = false;
       notifyListeners();

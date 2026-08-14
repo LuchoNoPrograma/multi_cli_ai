@@ -254,6 +254,34 @@ void main() {
     expect(output, contains('[REDACTADO]'));
   });
 
+  test('schema migration failures ask for the latest executable', () {
+    final failure = StartupFailure.from(
+      Exception(
+        "You've bumped the schema version for your drift database but didn't "
+        'provide a strategy for schema updates. Please adapt the migrations '
+        'getter in your database class.',
+      ),
+    );
+
+    expect(failure.kind, StartupFailureKind.updateRequired);
+    expect(failure.title, 'Ejecutable desactualizado');
+    expect(failure.message, contains('versión más reciente'));
+    expect(failure.message, contains('Tus datos se conservarán'));
+    expect(failure.message, isNot(contains('schema version')));
+  });
+
+  test('unexpected startup failures retain sanitized diagnostics', () {
+    final failure = StartupFailure.from(
+      Exception('authorization: Bearer secret-token; conexión rechazada'),
+    );
+
+    expect(failure.kind, StartupFailureKind.unexpected);
+    expect(failure.title, 'No se pudo iniciar');
+    expect(failure.message, contains('conexión rechazada'));
+    expect(failure.message, contains('[REDACTADO]'));
+    expect(failure.message, isNot(contains('secret-token')));
+  });
+
   test('usage check storage values round-trip', () {
     for (final value in UsageCheckState.values) {
       expect(
@@ -653,6 +681,36 @@ void main() {
       lastSuccessfulWindows: const [],
       resetCredits: null,
     );
+    final otherAccount = AccountCardData(
+      profile: account.profile.copyWith(
+        id: 'sol',
+        profileName: 'sol',
+        displayName: 'Sol',
+        profileHome: '/tmp/sol',
+      ),
+      metadata: null,
+      costShares: const [],
+      currentCheck: null,
+      currentWindows: const [],
+      lastSuccessfulCheck: null,
+      lastSuccessfulWindows: const [],
+      resetCredits: null,
+    );
+    controller
+      ..accounts = [otherAccount, account]
+      ..selectedProfileId = otherAccount.profile.id
+      ..workspaces = [
+        Workspace(
+          id: 'workspace',
+          path: '/home/nini/StudioProjects/multi_cli_ai',
+          pathKey: '/home/nini/StudioProjects/multi_cli_ai',
+          name: 'multi_cli_ai',
+          openCount: 1,
+          createdAt: now,
+          lastUsedAt: now,
+        ),
+      ]
+      ..currentWorkspaceId = 'workspace';
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark('cyan'),
@@ -678,6 +736,7 @@ void main() {
     expect(find.text('Ventana de 5 h'), findsOneWidget);
     expect(find.text('Límite semanal'), findsOneWidget);
     expect(find.text('93% disponible'), findsOneWidget);
+    expect(find.byTooltip('Lanzar agente con Ari'), findsOneWidget);
     expect(
       tester
           .widget<Icon>(
@@ -731,9 +790,38 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Elegir destino'), findsNothing);
-    expect(find.byIcon(Icons.terminal_rounded), findsNothing);
+    expect(find.byIcon(Icons.terminal_rounded), findsOneWidget);
 
     await tester.binding.setSurfaceSize(const Size(900, 620));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Lanzar agente con Ari'));
+    await tester.pumpAndSettle();
+    final ariPicker = find.byKey(const ValueKey('launch-account-ari'));
+    final solPicker = find.byKey(const ValueKey('launch-account-sol'));
+    expect(
+      find.descendant(of: ariPicker, matching: find.byIcon(Icons.check_circle)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: solPicker,
+        matching: find.byIcon(Icons.radio_button_unchecked),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: ariPicker, matching: find.text('88% disponible')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const ValueKey('launch-account-availability-ari')),
+          )
+          .value,
+      closeTo(.88, .001),
+    );
+    await tester.tap(find.byTooltip('Cerrar'));
     await tester.pumpAndSettle();
     unawaited(
       showEditAccountDialog(

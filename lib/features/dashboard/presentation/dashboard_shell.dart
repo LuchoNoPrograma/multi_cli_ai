@@ -34,10 +34,13 @@ class DashboardShell extends ConsumerWidget {
 
   Widget _body(BuildContext context, DashboardController controller) {
     if (controller.fatalError != null && !controller.initialized) {
+      final failure = controller.fatalError!;
       return EmptyState(
-        icon: Icons.error_outline,
-        title: 'No se pudo iniciar',
-        message: controller.fatalError!,
+        icon: failure.kind == StartupFailureKind.updateRequired
+            ? Icons.system_update_alt
+            : Icons.error_outline,
+        title: failure.title,
+        message: failure.message,
         action: FilledButton.icon(
           onPressed: controller.initialize,
           icon: const Icon(Icons.refresh),

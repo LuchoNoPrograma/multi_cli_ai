@@ -9,16 +9,24 @@ import 'package:multi_cli_ai/features/workspaces/presentation/workspace_dialogs.
 
 Future<void> showLaunchAgentDialog(
   BuildContext context,
-  DashboardController controller,
-) => showDialog<void>(
+  DashboardController controller, {
+  String? initialProfileId,
+}) => showDialog<void>(
   context: context,
-  builder: (context) => _LaunchAgentDialog(controller: controller),
+  builder: (context) => _LaunchAgentDialog(
+    controller: controller,
+    initialProfileId: initialProfileId,
+  ),
 );
 
 class _LaunchAgentDialog extends StatefulWidget {
-  const _LaunchAgentDialog({required this.controller});
+  const _LaunchAgentDialog({
+    required this.controller,
+    required this.initialProfileId,
+  });
 
   final DashboardController controller;
+  final String? initialProfileId;
 
   @override
   State<_LaunchAgentDialog> createState() => _LaunchAgentDialogState();
@@ -37,12 +45,19 @@ class _LaunchAgentDialogState extends State<_LaunchAgentDialog> {
   void initState() {
     super.initState();
     workspaceId = controller.currentWorkspace?.id;
+    for (final account in controller.accounts) {
+      if (account.profile.id == widget.initialProfileId &&
+          canLaunchAccount(account)) {
+        profileId = account.profile.id;
+        return;
+      }
+    }
     final selected = controller.selectedAccount;
-    if (selected != null && _canLaunch(selected)) {
+    if (selected != null && canLaunchAccount(selected)) {
       profileId = selected.profile.id;
     } else {
       for (final account in controller.accounts) {
-        if (_canLaunch(account)) {
+        if (canLaunchAccount(account)) {
           profileId = account.profile.id;
           break;
         }
@@ -414,14 +429,14 @@ class _AccountPickerPanel extends StatelessWidget {
                       padding: const EdgeInsets.all(5),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: constraints.maxWidth >= 620 ? 2 : 1,
-                        mainAxisExtent: 60,
+                        mainAxisExtent: 84,
                         crossAxisSpacing: 2,
                         mainAxisSpacing: 2,
                       ),
                       itemCount: accounts.length,
                       itemBuilder: (context, index) {
                         final account = accounts[index];
-                        final enabled = _canLaunch(account);
+                        final enabled = canLaunchAccount(account);
                         final selected = account.profile.id == selectedId;
                         final provider = profileProvider(
                           account.profile.toolKey,
@@ -429,6 +444,9 @@ class _AccountPickerPanel extends StatelessWidget {
                         return Opacity(
                           opacity: enabled ? 1 : .46,
                           child: _PickerRow(
+                            key: ValueKey(
+                              'launch-account-${account.profile.id}',
+                            ),
                             selected: selected,
                             onTap: enabled ? () => onSelected(account) : null,
                             leading: ProfileProviderIcon(
@@ -437,6 +455,7 @@ class _AccountPickerPanel extends StatelessWidget {
                             ),
                             title: account.profile.displayName,
                             subtitle: _accountSubtitle(account, provider),
+                            footer: _LaunchAvailability(account: account),
                           ),
                         );
                       },
@@ -456,7 +475,9 @@ class _PickerRow extends StatelessWidget {
     required this.leading,
     required this.title,
     required this.subtitle,
+    super.key,
     this.action,
+    this.footer,
   });
 
   final bool selected;
@@ -465,6 +486,7 @@ class _PickerRow extends StatelessWidget {
   final String title;
   final String subtitle;
   final Widget? action;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -480,7 +502,7 @@ class _PickerRow extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(5),
           child: SizedBox(
-            height: 58,
+            height: footer == null ? 58 : 82,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 9),
               child: Row(
@@ -509,6 +531,10 @@ class _PickerRow extends StatelessWidget {
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
+                        if (footer != null) ...[
+                          const SizedBox(height: 5),
+                          footer!,
+                        ],
                       ],
                     ),
                   ),
@@ -533,7 +559,72 @@ class _PickerRow extends StatelessWidget {
   }
 }
 
-bool _canLaunch(AccountCardData account) {
+class _LaunchAvailability extends StatelessWidget {
+  const _LaunchAvailability({required this.account});
+
+  final AccountCardData account;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final remaining = _lowestAvailablePercent(account);
+    final color = remaining == null
+        ? theme.colorScheme.onSurfaceVariant
+        : remaining <= 10
+        ? theme.colorScheme.error
+        : remaining <= 25
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.primary;
+    return Row(
+      children: [
+        Expanded(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(
+              begin: 0,
+              end: remaining == null ? 0 : remaining / 100,
+            ),
+            duration: const Duration(milliseconds: 620),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, _) => LinearProgressIndicator(
+              key: ValueKey(
+                'launch-account-availability-${account.profile.id}',
+              ),
+              value: value,
+              minHeight: 5,
+              borderRadius: BorderRadius.circular(3),
+              color: color,
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          remaining == null
+              ? 'Sin porcentaje'
+              : '${remaining.toStringAsFixed(0)}% disponible',
+          maxLines: 1,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+double? _lowestAvailablePercent(AccountCardData account) {
+  double? lowest;
+  for (final window in account.visibleWindows) {
+    final used = window.usedPercent?.clamp(0, 100).toDouble();
+    if (used == null) continue;
+    final remaining = 100 - used;
+    if (lowest == null || remaining < lowest) lowest = remaining;
+  }
+  return lowest;
+}
+
+bool canLaunchAccount(AccountCardData account) {
   final provider = profileProvider(account.profile.toolKey);
   return account.profile.isAvailable &&
       (account.profile.hasAuthFile || !provider.supportsDeviceAuth);

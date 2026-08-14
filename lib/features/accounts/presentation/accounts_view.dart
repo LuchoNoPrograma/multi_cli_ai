@@ -372,6 +372,7 @@ class _AccountCardState extends State<AccountCard> {
     final theme = Theme.of(context);
     final account = widget.account;
     final provider = profileProvider(account.profile.toolKey);
+    final launchable = canLaunchAccount(account);
     final stateColor = _stateColor(context, account);
     final windows = account.visibleWindows
         .take(widget.compact ? 1 : 2)
@@ -478,6 +479,21 @@ class _AccountCardState extends State<AccountCard> {
                     ],
                   ),
                 ),
+                AppIconButton(
+                  icon: Icons.terminal_rounded,
+                  tooltip: 'Lanzar agente con ${account.profile.displayName}',
+                  color: launchable
+                      ? theme.colorScheme.primary
+                      : theme.disabledColor,
+                  onPressed: launchable
+                      ? () => showLaunchAgentDialog(
+                          context,
+                          widget.controller,
+                          initialProfileId: account.profile.id,
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 2),
                 AppIconButton(
                   icon: Icons.edit_outlined,
                   tooltip: 'Editar perfil',
