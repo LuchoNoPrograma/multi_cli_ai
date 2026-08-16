@@ -134,8 +134,7 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
   final name = TextEditingController();
   final displayName = TextEditingController();
   String toolKey = 'codex';
-  String profileType = 'full';
-  bool seed = false;
+  String setupMode = 'shared';
   bool saving = false;
   String? error;
 
@@ -158,8 +157,8 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
           toolKey: toolKey,
           name: name.text,
           displayName: displayName.text,
-          profileType: profileType,
-          seedFromBase: seed,
+          profileType: setupMode,
+          seedFromBase: false,
         ),
       );
       final created = widget.controller.accounts
@@ -250,20 +249,41 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
                   hintText: 'Nexo',
                 ),
               ),
-              const SizedBox(height: 14),
-              DropdownButtonFormField<String>(
-                initialValue: profileType,
-                decoration: const InputDecoration(labelText: 'Tipo de perfil'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'full',
-                    child: Text('Completo · aislado'),
-                  ),
-                  DropdownMenuItem(value: 'shared', child: Text('Compartido')),
-                  DropdownMenuItem(value: 'cli', child: Text('Sólo CLI')),
-                ],
-                onChanged: (value) =>
-                    setState(() => profileType = value ?? 'full'),
+              const SizedBox(height: 18),
+              Text(
+                'Cómo empezar',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 4),
+              RadioGroup<String>(
+                groupValue: setupMode,
+                onChanged: saving
+                    ? (_) {}
+                    : (value) {
+                        if (value != null) setState(() => setupMode = value);
+                      },
+                child: Column(
+                  children: const [
+                    RadioListTile<String>(
+                      value: 'shared',
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      title: Text('Compartir ajustes'),
+                      subtitle: Text(
+                        'Usa las reglas, skills y configuración principal. La cuenta y el historial quedan separados.',
+                      ),
+                    ),
+                    RadioListTile<String>(
+                      value: 'full',
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      title: Text('Independiente'),
+                      subtitle: Text(
+                        'Crea un perfil independiente, sin historial ni ajustes anteriores.',
+                      ),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 8),
               Container(
@@ -295,21 +315,6 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
                     ),
                   ],
                 ),
-              ),
-              const Divider(height: 32),
-              SwitchListTile.adaptive(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 2),
-                secondary: Icon(
-                  Icons.content_copy_outlined,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                title: const Text('Copiar historial y ajustes'),
-                subtitle: Text(
-                  'Trae conversaciones y archivos compatibles del perfil principal '
-                  'de ${provider.productName}. La cuenta no se copia.',
-                ),
-                value: seed,
-                onChanged: (value) => setState(() => seed = value),
               ),
               if (error != null) ...[
                 const SizedBox(height: 8),

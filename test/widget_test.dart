@@ -568,8 +568,25 @@ void main() {
         .decoration;
     expect(aliasDecoration().prefixText, 'codex-');
     expect(find.byType(SegmentedButton<String>), findsNothing);
-    expect(find.text('Copiar historial y ajustes'), findsOneWidget);
-    expect(find.text('Sembrar configuración base'), findsNothing);
+    expect(find.text('Cómo empezar'), findsOneWidget);
+    expect(find.text('Compartir ajustes'), findsOneWidget);
+    expect(find.text('Independiente'), findsOneWidget);
+    expect(find.byType(RadioListTile<String>), findsNWidgets(2));
+    expect(
+      tester
+          .widget<RadioGroup<String>>(find.byType(RadioGroup<String>))
+          .groupValue,
+      'shared',
+    );
+
+    await tester.tap(find.text('Independiente'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<RadioGroup<String>>(find.byType(RadioGroup<String>))
+          .groupValue,
+      'full',
+    );
 
     await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
