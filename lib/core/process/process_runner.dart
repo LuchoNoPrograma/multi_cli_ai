@@ -248,7 +248,7 @@ class ProcessRunner {
       for (final candidate in candidates) {
         final terminal = findExecutable(candidate);
         if (terminal == null) continue;
-        return startDetached(
+        await startDetached(
           executable: terminal,
           arguments: buildTerminalArguments(
             terminal: candidate,
@@ -263,11 +263,13 @@ class ProcessRunner {
           environment: terminalEnvironment,
           includeParentEnvironment: false,
         );
+        _scheduleLinuxTerminalActivation(title);
+        return;
       }
     } else if (Platform.isWindows) {
       final terminal = findExecutable('wt');
       if (terminal != null) {
-        return startDetached(
+        await startDetached(
           executable: terminal,
           arguments: buildTerminalArguments(
             terminal: 'wt',
@@ -282,6 +284,8 @@ class ProcessRunner {
           environment: terminalEnvironment,
           includeParentEnvironment: false,
         );
+        _scheduleWindowsTerminalActivation(title);
+        return;
       }
     }
     throw StateError(
@@ -311,6 +315,9 @@ class ProcessRunner {
       ...arguments,
     ],
     'wt' => [
+      '--window',
+      'new',
+      'new-tab',
       if (title != null) ...['--title', title],
       if (workingDirectory != null) ...['-d', workingDirectory],
       target,
@@ -327,6 +334,94 @@ class ProcessRunner {
   static Map<String, String> buildTerminalEnvironment(
     Map<String, String> parent,
   ) => Map<String, String>.of(parent)..remove('NO_COLOR');
+
+  void _scheduleLinuxTerminalActivation(String? title) {
+    if (!Platform.isLinux || title == null || title.isEmpty) return;
+    final sessionType = Platform.environment['XDG_SESSION_TYPE'];
+    if (sessionType?.toLowerCase() == 'wayland') return;
+    final xdotool = findExecutable('xdotool');
+    if (xdotool == null) return;
+    unawaited(_activateLinuxTerminalWindow(xdotool, title));
+  }
+
+  void _scheduleWindowsTerminalActivation(String? title) {
+    if (!Platform.isWindows || title == null || title.isEmpty) return;
+    final powershell = findExecutable('powershell') ?? findExecutable('pwsh');
+    if (powershell == null) return;
+    unawaited(_activateWindowsTerminalWindow(powershell, title));
+  }
+
+  Future<void> _activateLinuxTerminalWindow(
+    String xdotool,
+    String title,
+  ) async {
+    final pattern = RegExp.escape(title);
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      for (var attempt = 0; attempt < 4; attempt++) {
+        final search = await Process.run(xdotool, [
+          'search',
+          '--name',
+          '--limit',
+          '1',
+          pattern,
+        ]);
+        final windowId = search.stdout.toString().trim().split('\n').first;
+        if (search.exitCode == 0 && windowId.isNotEmpty) {
+          await Process.run(xdotool, ['windowactivate', windowId]);
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+    } on ProcessException {
+      // Focusing is best-effort; launching the terminal already succeeded.
+    }
+  }
+
+  Future<void> _activateWindowsTerminalWindow(
+    String powershell,
+    String title,
+  ) async {
+    const script = r'''
+Add-Type -TypeDefinition '
+using System;
+using System.Runtime.InteropServices;
+public static class MultiCliWindow {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}'
+for ($attempt = 0; $attempt -lt 5; $attempt++) {
+  $window = Get-Process -Name 'WindowsTerminal*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($env:MULTICLI_TERMINAL_TITLE) } |
+    Select-Object -First 1
+  if ($null -ne $window) {
+    [MultiCliWindow]::ShowWindowAsync($window.MainWindowHandle, 9) | Out-Null
+    [MultiCliWindow]::SetForegroundWindow($window.MainWindowHandle) | Out-Null
+    exit 0
+  }
+  Start-Sleep -Milliseconds 250
+}
+''';
+    try {
+      await Process.start(
+        powershell,
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-Command',
+          script,
+        ],
+        environment: {'MULTICLI_TERMINAL_TITLE': title},
+        includeParentEnvironment: true,
+        mode: ProcessStartMode.detached,
+      );
+    } on ProcessException {
+      // Focusing is best-effort; launching Windows Terminal already succeeded.
+    }
+  }
 
   Future<void> addInternalLog({
     required String summary,

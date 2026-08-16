@@ -159,11 +159,15 @@ class _LaunchAgentDialogState extends State<_LaunchAgentDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final height = (MediaQuery.sizeOf(context).height * .62).clamp(
-      380.0,
-      520.0,
-    );
+    final viewport = MediaQuery.sizeOf(context);
+    final width = viewport.width * .84;
+    final height = viewport.height * .68;
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: viewport.width * .04,
+        vertical: viewport.height * .04,
+      ),
+      constraints: BoxConstraints(maxWidth: viewport.width * .92),
       title: Row(
         children: [
           const Icon(Icons.terminal_rounded, size: 20),
@@ -177,45 +181,56 @@ class _LaunchAgentDialogState extends State<_LaunchAgentDialog> {
         ],
       ),
       content: SizedBox(
-        width: 760,
+        width: width,
         height: height,
         child: AnimatedBuilder(
           animation: controller,
-          builder: (context, _) {
-            final maxWorkspaceHeight = (height * .42).clamp(150.0, 220.0);
-            final workspaceHeight = (50.0 + controller.workspaces.length * 60)
-                .clamp(118.0, maxWorkspaceHeight);
-            return Column(
-              children: [
-                SizedBox(
-                  height: workspaceHeight,
-                  child: _WorkspacePickerPanel(
-                    workspaces: visibleWorkspaces,
-                    hasWorkspaceHistory: controller.workspaces.isNotEmpty,
-                    selectedId: workspaceId,
-                    searchController: workspaceSearchController,
-                    query: workspaceQuery,
-                    onSelected: (value) =>
-                        setState(() => workspaceId = value.id),
-                    onSearch: _searchWorkspaces,
-                    onClearSearch: _clearWorkspaceSearch,
-                    onAdd: _addWorkspace,
-                    onRename: _renameWorkspace,
-                    onRemove: _removeWorkspace,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: _AccountPickerPanel(
-                    accounts: controller.accounts,
-                    selectedId: profileId,
-                    onSelected: (value) =>
-                        setState(() => profileId = value.profile.id),
-                  ),
-                ),
-              ],
-            );
-          },
+          builder: (context, _) => LayoutBuilder(
+            builder: (context, constraints) {
+              final useColumns = constraints.maxWidth >= 640;
+              final workspacePanel = _WorkspacePickerPanel(
+                key: const Key('launch-workspace-panel'),
+                workspaces: visibleWorkspaces,
+                hasWorkspaceHistory: controller.workspaces.isNotEmpty,
+                selectedId: workspaceId,
+                searchController: workspaceSearchController,
+                query: workspaceQuery,
+                onSelected: (value) => setState(() => workspaceId = value.id),
+                onSearch: _searchWorkspaces,
+                onClearSearch: _clearWorkspaceSearch,
+                onAdd: _addWorkspace,
+                onRename: _renameWorkspace,
+                onRemove: _removeWorkspace,
+              );
+              final accountPanel = _AccountPickerPanel(
+                key: const Key('launch-account-panel'),
+                accounts: controller.accounts,
+                selectedId: profileId,
+                onSelected: (value) =>
+                    setState(() => profileId = value.profile.id),
+              );
+
+              if (useColumns) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: workspacePanel),
+                    const SizedBox(width: 12),
+                    Expanded(child: accountPanel),
+                  ],
+                );
+              }
+
+              final workspaceHeight = (height * .36).clamp(150.0, 240.0);
+              return Column(
+                children: [
+                  SizedBox(height: workspaceHeight, child: workspacePanel),
+                  const SizedBox(height: 12),
+                  Expanded(child: accountPanel),
+                ],
+              );
+            },
+          ),
         ),
       ),
       actions: [
@@ -255,6 +270,7 @@ class _WorkspacePickerPanel extends StatelessWidget {
     required this.onAdd,
     required this.onRename,
     required this.onRemove,
+    super.key,
   });
 
   final List<Workspace> workspaces;
@@ -383,6 +399,7 @@ class _AccountPickerPanel extends StatefulWidget {
     required this.accounts,
     required this.selectedId,
     required this.onSelected,
+    super.key,
   });
 
   final List<AccountCardData> accounts;
@@ -393,6 +410,8 @@ class _AccountPickerPanel extends StatefulWidget {
   State<_AccountPickerPanel> createState() => _AccountPickerPanelState();
 }
 
+enum _AccountSort { name, availability }
+
 class _AccountPickerPanelState extends State<_AccountPickerPanel> {
   static const itemExtent = 84.0;
   static const itemSpacing = 2.0;
@@ -401,6 +420,7 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
   final scrollController = ScrollController();
   String? scrolledSelectionId;
   int? scrolledColumnCount;
+  _AccountSort sort = _AccountSort.name;
 
   @override
   void didUpdateWidget(covariant _AccountPickerPanel oldWidget) {
@@ -410,14 +430,17 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
     }
   }
 
-  void _scrollToSelection(int columnCount) {
+  void _scrollToSelection(
+    int columnCount,
+    List<AccountCardData> sortedAccounts,
+  ) {
     final selectedId = widget.selectedId;
     if (selectedId == null ||
         (scrolledSelectionId == selectedId &&
             scrolledColumnCount == columnCount)) {
       return;
     }
-    final index = widget.accounts.indexWhere(
+    final index = sortedAccounts.indexWhere(
       (account) => account.profile.id == selectedId,
     );
     if (index < 0) return;
@@ -458,6 +481,20 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final sortedAccounts = [...widget.accounts]
+      ..sort((left, right) {
+        if (sort == _AccountSort.availability) {
+          final availability = (_lowestAvailablePercent(right) ?? -1).compareTo(
+            _lowestAvailablePercent(left) ?? -1,
+          );
+          if (availability != 0) return availability;
+        }
+        final name = left.profile.displayName.toLowerCase().compareTo(
+          right.profile.displayName.toLowerCase(),
+        );
+        if (name != 0) return name;
+        return left.profile.id.compareTo(right.profile.id);
+      });
     return Container(
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outline),
@@ -482,7 +519,43 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: PopupMenuButton<_AccountSort>(
+                    tooltip: 'Ordenar cuentas',
+                    initialValue: sort,
+                    icon: Icon(
+                      sort == _AccountSort.name
+                          ? Icons.sort_by_alpha
+                          : Icons.percent,
+                      size: 17,
+                    ),
+                    padding: EdgeInsets.zero,
+                    position: PopupMenuPosition.under,
+                    onSelected: (value) {
+                      if (value == sort) return;
+                      setState(() {
+                        sort = value;
+                        scrolledSelectionId = null;
+                      });
+                    },
+                    itemBuilder: (context) => [
+                      CheckedPopupMenuItem(
+                        value: _AccountSort.name,
+                        checked: sort == _AccountSort.name,
+                        child: const Text('Nombre (A-Z)'),
+                      ),
+                      CheckedPopupMenuItem(
+                        value: _AccountSort.availability,
+                        checked: sort == _AccountSort.availability,
+                        child: const Text('Disponibilidad'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 5),
               ],
             ),
           ),
@@ -493,7 +566,7 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
                 : LayoutBuilder(
                     builder: (context, constraints) {
                       final columnCount = constraints.maxWidth >= 620 ? 2 : 1;
-                      _scrollToSelection(columnCount);
+                      _scrollToSelection(columnCount, sortedAccounts);
                       return GridView.builder(
                         key: const Key('launch-account-list'),
                         controller: scrollController,
@@ -504,9 +577,9 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
                           crossAxisSpacing: itemSpacing,
                           mainAxisSpacing: itemSpacing,
                         ),
-                        itemCount: widget.accounts.length,
+                        itemCount: sortedAccounts.length,
                         itemBuilder: (context, index) {
-                          final account = widget.accounts[index];
+                          final account = sortedAccounts[index];
                           final enabled = canLaunchAccount(account);
                           final selected =
                               account.profile.id == widget.selectedId;

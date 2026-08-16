@@ -220,7 +220,17 @@ void main() {
         workingDirectory: project,
         title: title,
       ),
-      ['--title', title, '-d', project, target, ...command],
+      [
+        '--window',
+        'new',
+        'new-tab',
+        '--title',
+        title,
+        '-d',
+        project,
+        target,
+        ...command,
+      ],
     );
   });
 
@@ -719,7 +729,7 @@ void main() {
         profile: account.profile.copyWith(
           id: 'filler-$index',
           profileName: 'filler-$index',
-          displayName: 'Cuenta $index',
+          displayName: 'A Cuenta $index',
           profileHome: '/tmp/filler-$index',
         ),
         metadata: null,
@@ -991,8 +1001,38 @@ void main() {
       lastSuccessfulWindows: const [],
       resetCredits: null,
     );
+    final zoeCheck = UsageCheck(
+      id: 'zoe-check',
+      profileId: 'zoe',
+      queryMethod: 'codex-app-server',
+      status: 'success',
+      startedAt: now,
+    );
+    final zoeAccount = AccountCardData(
+      profile: account.profile.copyWith(
+        id: 'zoe',
+        profileName: 'zoe',
+        displayName: 'Zoe',
+        profileHome: '/tmp/zoe',
+      ),
+      metadata: null,
+      costShares: const [],
+      currentCheck: zoeCheck,
+      currentWindows: [
+        QuotaWindow(
+          id: 'zoe-quota',
+          checkId: zoeCheck.id,
+          limitId: 'codex',
+          windowType: 'primary',
+          usedPercent: 20,
+        ),
+      ],
+      lastSuccessfulCheck: zoeCheck,
+      lastSuccessfulWindows: const [],
+      resetCredits: null,
+    );
     controller
-      ..accounts = [account]
+      ..accounts = [zoeAccount, account]
       ..selectedProfileId = account.profile.id
       ..workspaces = [
         Workspace(
@@ -1062,6 +1102,52 @@ void main() {
     expect(find.text('Cuenta para lanzar'), findsOneWidget);
     expect(find.text('multi_cli_ai'), findsOneWidget);
     expect(find.byKey(const Key('launch-workspace-search')), findsOneWidget);
+
+    final compactDialogSize = tester.getSize(find.byType(AlertDialog));
+    var workspaceRect = tester.getRect(
+      find.byKey(const Key('launch-workspace-panel')),
+    );
+    var accountRect = tester.getRect(
+      find.byKey(const Key('launch-account-panel')),
+    );
+    expect(workspaceRect.right, lessThan(accountRect.left));
+    expect(workspaceRect.height, accountRect.height);
+    expect(workspaceRect.width, closeTo(accountRect.width, .1));
+
+    var ariRect = tester.getRect(find.byKey(const Key('launch-account-ari')));
+    var zoeRect = tester.getRect(find.byKey(const Key('launch-account-zoe')));
+    expect(ariRect.top, lessThan(zoeRect.top));
+    await tester.tap(find.byTooltip('Ordenar cuentas'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.ancestor(
+        of: find.text('Disponibilidad'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is CheckedPopupMenuItem,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    ariRect = tester.getRect(find.byKey(const Key('launch-account-ari')));
+    zoeRect = tester.getRect(find.byKey(const Key('launch-account-zoe')));
+    expect(zoeRect.top, lessThan(ariRect.top));
+
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    await tester.pumpAndSettle();
+    final largeDialogSize = tester.getSize(find.byType(AlertDialog));
+    expect(largeDialogSize.width, greaterThan(compactDialogSize.width));
+    expect(largeDialogSize.height, greaterThan(compactDialogSize.height));
+
+    await tester.binding.setSurfaceSize(const Size(700, 620));
+    await tester.pumpAndSettle();
+    workspaceRect = tester.getRect(
+      find.byKey(const Key('launch-workspace-panel')),
+    );
+    accountRect = tester.getRect(find.byKey(const Key('launch-account-panel')));
+    expect(workspaceRect.bottom, lessThan(accountRect.top));
+
+    await tester.binding.setSurfaceSize(const Size(900, 620));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('launch-workspace-search')),
       'archivo',
