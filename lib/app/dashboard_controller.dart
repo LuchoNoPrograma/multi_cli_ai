@@ -14,6 +14,8 @@ import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 
 enum AppSection { accounts, calendar, activity }
 
+enum AccountSort { name, availability, renewal, reset }
+
 enum StartupFailureKind { updateRequired, unexpected }
 
 class StartupFailure {
@@ -85,6 +87,7 @@ class DashboardController extends ChangeNotifier {
   AppSection section = AppSection.accounts;
   String query = '';
   String statusFilter = 'all';
+  AccountSort accountSort = AccountSort.name;
   String? selectedProfileId;
   String? currentWorkspaceId;
   DateTime selectedDay = DateTime.now();
@@ -98,7 +101,7 @@ class DashboardController extends ChangeNotifier {
 
   List<AccountCardData> get visibleAccounts {
     final search = query.trim().toLowerCase();
-    return accounts.where((account) {
+    final visible = accounts.where((account) {
       final matchesSearch =
           search.isEmpty ||
           account.profile.displayName.toLowerCase().contains(search) ||
@@ -120,6 +123,55 @@ class DashboardController extends ChangeNotifier {
       };
       return matchesSearch && matchesState;
     }).toList();
+    visible.sort(_compareAccounts);
+    return visible;
+  }
+
+  int _compareAccounts(AccountCardData left, AccountCardData right) {
+    final bySelectedField = switch (accountSort) {
+      AccountSort.name => 0,
+      AccountSort.availability => _compareOptionalValuesDescending(
+        left.lowestAvailablePercent,
+        right.lowestAvailablePercent,
+      ),
+      AccountSort.renewal => _compareOptionalDates(
+        left.metadata?.nextRenewalOn,
+        right.metadata?.nextRenewalOn,
+      ),
+      AccountSort.reset => _compareOptionalDates(
+        _nextResetAt(left),
+        _nextResetAt(right),
+      ),
+    };
+    if (bySelectedField != 0) return bySelectedField;
+
+    final byName = left.profile.displayName.toLowerCase().compareTo(
+      right.profile.displayName.toLowerCase(),
+    );
+    return byName != 0 ? byName : left.profile.id.compareTo(right.profile.id);
+  }
+
+  static int _compareOptionalDates(DateTime? left, DateTime? right) {
+    if (left == null) return right == null ? 0 : 1;
+    if (right == null) return -1;
+    return left.compareTo(right);
+  }
+
+  static int _compareOptionalValuesDescending(double? left, double? right) {
+    if (left == null) return right == null ? 0 : 1;
+    if (right == null) return -1;
+    return right.compareTo(left);
+  }
+
+  static DateTime? _nextResetAt(AccountCardData account) {
+    DateTime? next;
+    for (final window in account.visibleWindows) {
+      final reset = window.resetsAt;
+      if (reset != null && (next == null || reset.isBefore(next))) {
+        next = reset;
+      }
+    }
+    return next;
   }
 
   AccountCardData? get selectedAccount {
@@ -378,6 +430,11 @@ class DashboardController extends ChangeNotifier {
 
   void setStatusFilter(String value) {
     statusFilter = value;
+    notifyListeners();
+  }
+
+  void setAccountSort(AccountSort value) {
+    accountSort = value;
     notifyListeners();
   }
 

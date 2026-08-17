@@ -484,8 +484,8 @@ class _AccountPickerPanelState extends State<_AccountPickerPanel> {
     final sortedAccounts = [...widget.accounts]
       ..sort((left, right) {
         if (sort == _AccountSort.availability) {
-          final availability = (_lowestAvailablePercent(right) ?? -1).compareTo(
-            _lowestAvailablePercent(left) ?? -1,
+          final availability = (right.lowestAvailablePercent ?? -1).compareTo(
+            left.lowestAvailablePercent ?? -1,
           );
           if (availability != 0) return availability;
         }
@@ -715,7 +715,7 @@ class _LaunchAvailability extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final remaining = _lowestAvailablePercent(account);
+    final remaining = account.lowestAvailablePercent;
     final color = remaining == null
         ? theme.colorScheme.onSurfaceVariant
         : remaining <= 10
@@ -759,17 +759,6 @@ class _LaunchAvailability extends StatelessWidget {
       ],
     );
   }
-}
-
-double? _lowestAvailablePercent(AccountCardData account) {
-  double? lowest;
-  for (final window in account.visibleWindows) {
-    final used = window.usedPercent?.clamp(0, 100).toDouble();
-    if (used == null) continue;
-    final remaining = 100 - used;
-    if (lowest == null || remaining < lowest) lowest = remaining;
-  }
-  return lowest;
 }
 
 bool canLaunchAccount(AccountCardData account) {

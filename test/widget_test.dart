@@ -301,6 +301,129 @@ void main() {
     }
   });
 
+  test(
+    'account list sorts by name, availability, renewal, and nearest reset',
+    () async {
+      final database = AppDatabase(NativeDatabase.memory());
+      addTearDown(database.close);
+      final runner = ProcessRunner(database);
+      final controller = DashboardController(
+        database: database,
+        discovery: ProfileDiscoveryService(database),
+        multiCli: MultiCliGateway(database, runner),
+        accountsRepository: AccountRepository(database),
+        workspaceRepository: WorkspaceRepository(database),
+        usage: UsageRefreshService(
+          database: database,
+          client: const CodexAppServerClient(),
+          runner: runner,
+        ),
+        runner: runner,
+      );
+      final base = DateTime.utc(2026, 8, 17);
+
+      AccountCardData account({
+        required String id,
+        required String name,
+        DateTime? renewal,
+        DateTime? reset,
+        double? usedPercent,
+      }) {
+        final check = UsageCheck(
+          id: '$id-check',
+          profileId: id,
+          queryMethod: 'test',
+          status: 'success',
+          startedAt: base,
+        );
+        return AccountCardData(
+          profile: CliProfile(
+            id: id,
+            toolKey: 'codex',
+            profileName: id,
+            commandName: 'codex-$id',
+            displayName: name,
+            profileHome: '/tmp/$id',
+            profileSource: 'multicli',
+            profileType: 'full',
+            hasAuthFile: true,
+            isAvailable: true,
+            isFavorite: false,
+            createdAt: base,
+            lastDiscoveredAt: base,
+          ),
+          metadata: ProfileMetadata(
+            profileId: id,
+            accountEmail: '',
+            accountDisplayName: '',
+            planName: '',
+            notes: '',
+            tagsJson: '[]',
+            nextRenewalOn: renewal,
+            billingInterval: 'monthly',
+            expectedAmountMinor: 0,
+            currencyCode: 'USD',
+            autoRenew: true,
+            subscriptionStatus: 'active',
+            purchasedFrom: '',
+            paymentMethodLabel: '',
+            updatedAt: base,
+          ),
+          costShares: const [],
+          currentCheck: check,
+          currentWindows: reset == null && usedPercent == null
+              ? const []
+              : [
+                  QuotaWindow(
+                    id: '$id-window',
+                    checkId: check.id,
+                    limitId: 'codex',
+                    windowType: 'primary',
+                    usedPercent: usedPercent,
+                    resetsAt: reset,
+                  ),
+                ],
+          lastSuccessfulCheck: check,
+          lastSuccessfulWindows: const [],
+          resetCredits: null,
+        );
+      }
+
+      controller.accounts = [
+        account(
+          id: 'zeta',
+          name: 'Zeta',
+          renewal: base.add(const Duration(days: 3)),
+          reset: base.add(const Duration(hours: 4)),
+          usedPercent: 80,
+        ),
+        account(
+          id: 'alpha',
+          name: 'Alpha',
+          reset: base.add(const Duration(hours: 2)),
+          usedPercent: 10,
+        ),
+        account(
+          id: 'mu',
+          name: 'Mu',
+          renewal: base.add(const Duration(days: 1)),
+        ),
+      ];
+
+      List<String> names() => controller.visibleAccounts
+          .map((item) => item.profile.displayName)
+          .toList();
+
+      expect(names(), ['Alpha', 'Mu', 'Zeta']);
+      controller.setAccountSort(AccountSort.availability);
+      expect(names(), ['Alpha', 'Zeta', 'Mu']);
+      controller.setAccountSort(AccountSort.renewal);
+      expect(names(), ['Mu', 'Zeta', 'Alpha']);
+      controller.setAccountSort(AccountSort.reset);
+      expect(names(), ['Alpha', 'Zeta', 'Mu']);
+    },
+  );
+
   test('Codex rate-limit mirrors are deduplicated by bucket and window', () {
     const primary = {
       'usedPercent': 12,
@@ -1087,6 +1210,14 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(ChoiceChip, 'Nombre'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Disponibilidad'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Renovación'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Reinicio próximo'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Renovación'));
+    await tester.pumpAndSettle();
+    expect(controller.accountSort, AccountSort.renewal);
 
     expect(find.text('Workspaces recientes'), findsNothing);
     expect(find.text('multi_cli_ai'), findsNothing);

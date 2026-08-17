@@ -158,6 +158,17 @@ class AccountCardData {
   List<QuotaWindow> get visibleWindows =>
       currentIsUsable ? currentWindows : lastSuccessfulWindows;
 
+  double? get lowestAvailablePercent {
+    double? lowest;
+    for (final window in visibleWindows) {
+      final used = window.usedPercent?.clamp(0, 100).toDouble();
+      if (used == null) continue;
+      final remaining = 100 - used;
+      if (lowest == null || remaining < lowest) lowest = remaining;
+    }
+    return lowest;
+  }
+
   String get observedPlan =>
       currentCheck?.planType ?? lastSuccessfulCheck?.planType ?? '';
 

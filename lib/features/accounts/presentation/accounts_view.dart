@@ -44,6 +44,7 @@ class AccountsView extends ConsumerWidget {
           if (latest == null || value.isAfter(latest)) return value;
           return latest;
         });
+    final visibleAccounts = controller.visibleAccounts;
 
     return CustomScrollView(
       slivers: [
@@ -93,7 +94,7 @@ class AccountsView extends ConsumerWidget {
             child: _AccountFilters(controller: controller),
           ),
         ),
-        if (controller.visibleAccounts.isEmpty)
+        if (visibleAccounts.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
             child: EmptyState(
@@ -139,7 +140,7 @@ class AccountsView extends ConsumerWidget {
                         (controller.compactCards ? 213 : 246) * densityScale,
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
-                    final account = controller.visibleAccounts[index];
+                    final account = visibleAccounts[index];
                     return SizedBox(
                           width: extent,
                           child: AccountCard(
@@ -154,7 +155,7 @@ class AccountsView extends ConsumerWidget {
                         .animate(delay: (index * 45).ms)
                         .fadeIn(duration: 260.ms)
                         .moveY(begin: 10, end: 0, curve: Curves.easeOutCubic);
-                  }, childCount: controller.visibleAccounts.length),
+                  }, childCount: visibleAccounts.length),
                 );
               },
             ),
@@ -246,8 +247,8 @@ class _AccountFilters extends StatelessWidget {
           ),
         ),
       );
-      final filters = Row(
-        mainAxisSize: MainAxisSize.min,
+      final filters = Wrap(
+        spacing: 6,
         children: [
           _FilterItem(
             label: 'Todos',
@@ -271,6 +272,45 @@ class _AccountFilters extends StatelessWidget {
           ),
         ],
       );
+      final sort = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Ordenar por',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 8),
+          _FilterItem(
+            label: 'Nombre',
+            icon: Icons.sort_by_alpha,
+            selected: controller.accountSort == AccountSort.name,
+            onTap: () => controller.setAccountSort(AccountSort.name),
+          ),
+          const SizedBox(width: 6),
+          _FilterItem(
+            label: 'Disponibilidad',
+            icon: Icons.percent,
+            selected: controller.accountSort == AccountSort.availability,
+            onTap: () => controller.setAccountSort(AccountSort.availability),
+          ),
+          const SizedBox(width: 6),
+          _FilterItem(
+            label: 'Renovación',
+            icon: Icons.event_repeat,
+            selected: controller.accountSort == AccountSort.renewal,
+            onTap: () => controller.setAccountSort(AccountSort.renewal),
+          ),
+          const SizedBox(width: 6),
+          _FilterItem(
+            label: 'Reinicio próximo',
+            icon: Icons.update,
+            selected: controller.accountSort == AccountSort.reset,
+            onTap: () => controller.setAccountSort(AccountSort.reset),
+          ),
+        ],
+      );
       if (constraints.maxWidth < 680) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -281,10 +321,22 @@ class _AccountFilters extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: filters,
             ),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: sort,
+            ),
           ],
         );
       }
-      return Row(children: [search, const Spacer(), filters]);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [search, const Spacer(), filters]),
+          const SizedBox(height: 10),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: sort),
+        ],
+      );
     },
   );
 }
@@ -294,40 +346,56 @@ class _FilterItem extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.icon,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(3),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected
-              ? theme.colorScheme.primary.withValues(alpha: .08)
-              : Colors.transparent,
-          border: Border(
-            bottom: BorderSide(
-              color: selected ? theme.colorScheme.primary : Colors.transparent,
+    return ChoiceChip(
+      selected: selected,
+      onSelected: (_) => onTap(),
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+      labelPadding: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      side: BorderSide(
+        color: selected
+            ? theme.colorScheme.primary.withValues(alpha: .55)
+            : theme.colorScheme.outline,
+      ),
+      selectedColor: theme.colorScheme.primary.withValues(alpha: .1),
+      backgroundColor: theme.colorScheme.surfaceContainerLow,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(
+              icon,
+              size: 15,
+              color: selected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: selected
+                  ? theme.colorScheme.onSurface
+                  : theme.colorScheme.onSurfaceVariant,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
-        ),
-        child: Text(
-          label,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: selected
-                ? theme.colorScheme.onSurface
-                : theme.colorScheme.onSurfaceVariant,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
+        ],
       ),
     );
   }
