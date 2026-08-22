@@ -35,6 +35,7 @@ class ProcessRunner {
 
   final AppDatabase database;
   final Uuid _uuid = const Uuid();
+  static Future<String>? _hyperShellLauncher;
 
   static String? findExecutable(String name) {
     final executableName = Platform.isWindows && !name.endsWith('.exe')
@@ -239,19 +240,24 @@ class ProcessRunner {
         : Directory(workingDirectory).absolute.path;
     final terminalEnvironment = buildTerminalEnvironment(Platform.environment);
     if (Platform.isLinux) {
-      const candidates = [
-        'gnome-terminal',
-        'kgx',
-        'konsole',
-        'x-terminal-emulator',
-      ];
+      final candidates = await _linuxTerminalCandidates();
       for (final candidate in candidates) {
         final terminal = findExecutable(candidate);
         if (terminal == null) continue;
+        final terminalKind = identifyTerminal(terminal);
+        final environment = terminalKind == 'hyper'
+            ? buildHyperTerminalEnvironment(
+                terminalEnvironment,
+                shellLauncher: await _ensureHyperShellLauncher(),
+                target: target,
+                arguments: arguments,
+                title: title,
+              )
+            : terminalEnvironment;
         await startDetached(
           executable: terminal,
           arguments: buildTerminalArguments(
-            terminal: candidate,
+            terminal: terminalKind,
             target: target,
             arguments: arguments,
             workingDirectory: launchDirectory,
@@ -260,7 +266,7 @@ class ProcessRunner {
           summary: summary,
           profileId: profileId,
           workingDirectory: launchDirectory,
-          environment: terminalEnvironment,
+          environment: environment,
           includeParentEnvironment: false,
         );
         _scheduleLinuxTerminalActivation(title);
@@ -300,6 +306,7 @@ class ProcessRunner {
     String? workingDirectory,
     String? title,
   }) => switch (terminal) {
+    'hyper' => [?workingDirectory],
     'gnome-terminal' || 'kgx' => [
       if (title != null) '--title=$title',
       if (workingDirectory != null) '--working-directory=$workingDirectory',
@@ -334,6 +341,132 @@ class ProcessRunner {
   static Map<String, String> buildTerminalEnvironment(
     Map<String, String> parent,
   ) => Map<String, String>.of(parent)..remove('NO_COLOR');
+
+  static Map<String, String> buildHyperTerminalEnvironment(
+    Map<String, String> parent, {
+    required String shellLauncher,
+    required String target,
+    required List<String> arguments,
+    String? title,
+  }) {
+    final environment = buildTerminalEnvironment(parent)
+      ..removeWhere((key, _) => key.startsWith('MULTICLI_TERMINAL_'))
+      ..['SHELL'] = shellLauncher
+      ..['MULTICLI_TERMINAL_TARGET'] = target
+      ..['MULTICLI_TERMINAL_ARGC'] = arguments.length.toString();
+    if (title != null && title.isNotEmpty) {
+      environment['MULTICLI_TERMINAL_TITLE'] = title;
+    }
+    for (var index = 0; index < arguments.length; index++) {
+      environment['MULTICLI_TERMINAL_ARG_$index'] = arguments[index];
+    }
+    return environment;
+  }
+
+  static String identifyTerminal(String executable) {
+    var resolved = executable;
+    try {
+      resolved = File(executable).resolveSymbolicLinksSync();
+    } on FileSystemException {
+      // The configured command may not be a symlink or may disappear later.
+    }
+    final name = resolved.replaceAll('\\', '/').split('/').last.toLowerCase();
+    if (name.contains('hyper')) return 'hyper';
+    if (name.contains('gnome-terminal')) return 'gnome-terminal';
+    if (name == 'kgx') return 'kgx';
+    if (name.contains('konsole')) return 'konsole';
+    return 'x-terminal-emulator';
+  }
+
+  static Future<List<String>> _linuxTerminalCandidates() async {
+    final candidates = <String>[];
+    final configured = await _readDesktopTerminal();
+    if (configured != null) candidates.add(configured);
+    for (final fallback in const [
+      'x-terminal-emulator',
+      'gnome-terminal',
+      'kgx',
+      'konsole',
+    ]) {
+      if (!candidates.contains(fallback)) candidates.add(fallback);
+    }
+    return candidates;
+  }
+
+  static Future<String?> _readDesktopTerminal() async {
+    final gsettings = findExecutable('gsettings');
+    if (gsettings == null) return null;
+    for (final schema in const [
+      'org.cinnamon.desktop.default-applications.terminal',
+      'org.gnome.desktop.default-applications.terminal',
+    ]) {
+      try {
+        final result = await Process.run(gsettings, ['get', schema, 'exec']);
+        if (result.exitCode != 0) continue;
+        final value = parseGSettingsString(result.stdout.toString());
+        if (value != null && value.isNotEmpty) return value;
+      } on ProcessException {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  static String? parseGSettingsString(String output) {
+    final value = output.trim();
+    if (value.length < 2) return null;
+    final quote = value[0];
+    if ((quote != "'" && quote != '"') || value[value.length - 1] != quote) {
+      return value;
+    }
+    final decoded = StringBuffer();
+    for (var index = 1; index < value.length - 1; index++) {
+      final character = value[index];
+      if (character == r'\' && index + 1 < value.length - 1) {
+        index++;
+        decoded.write(value[index]);
+      } else {
+        decoded.write(character);
+      }
+    }
+    final result = decoded.toString();
+    return result.isEmpty ? null : result;
+  }
+
+  static Future<String> _ensureHyperShellLauncher() =>
+      _hyperShellLauncher ??= _createHyperShellLauncher();
+
+  static Future<String> _createHyperShellLauncher() async {
+    final directory = await Directory.systemTemp.createTemp(
+      'multi-cli-ai-hyper-',
+    );
+    final launcher = File('${directory.path}/launch-command');
+    await launcher.writeAsString(r'''#!/usr/bin/env bash
+set -u
+
+target=${MULTICLI_TERMINAL_TARGET:?}
+argument_count=${MULTICLI_TERMINAL_ARGC:-0}
+arguments=()
+for ((index = 0; index < argument_count; index++)); do
+  variable="MULTICLI_TERMINAL_ARG_${index}"
+  arguments+=("${!variable-}")
+done
+
+if [[ -n ${MULTICLI_TERMINAL_TITLE:-} ]]; then
+  printf '\033]0;%s\007' "$MULTICLI_TERMINAL_TITLE"
+fi
+
+exec "$target" "${arguments[@]}"
+''');
+    final chmod = await Process.run('chmod', ['700', launcher.path]);
+    if (chmod.exitCode != 0) {
+      throw FileSystemException(
+        'No se pudo preparar el iniciador de Hyper.',
+        launcher.path,
+      );
+    }
+    return launcher.path;
+  }
 
   void _scheduleLinuxTerminalActivation(String? title) {
     if (!Platform.isLinux || title == null || title.isEmpty) return;

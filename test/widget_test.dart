@@ -232,6 +232,50 @@ void main() {
         ...command,
       ],
     );
+    expect(
+      ProcessRunner.buildTerminalArguments(
+        terminal: 'hyper',
+        target: target,
+        arguments: command,
+        workingDirectory: project,
+        title: title,
+      ),
+      [project],
+    );
+  });
+
+  test('Linux terminal discovery recognizes Hyper and gsettings values', () {
+    expect(
+      ProcessRunner.identifyTerminal('/home/nini/.local/bin/hyper-cwd'),
+      'hyper',
+    );
+    expect(
+      ProcessRunner.parseGSettingsString("'/home/nini/.local/bin/hyper-cwd'"),
+      '/home/nini/.local/bin/hyper-cwd',
+    );
+    expect(ProcessRunner.parseGSettingsString("''"), isNull);
+  });
+
+  test('Hyper receives the command, its arguments, and the tab title', () {
+    final environment = ProcessRunner.buildHyperTerminalEnvironment(
+      {'PATH': '/usr/bin', 'NO_COLOR': '1', 'MULTICLI_TERMINAL_ARG_9': 'stale'},
+      shellLauncher: '/tmp/multi-cli-ai/launch-command',
+      target: '/home/nini/.local/bin/multi-cli',
+      arguments: const ['launch', 'codex/ari', '--workspace', 'bora asai'],
+      title: 'ari · bora asai',
+    );
+
+    expect(environment['SHELL'], '/tmp/multi-cli-ai/launch-command');
+    expect(
+      environment['MULTICLI_TERMINAL_TARGET'],
+      '/home/nini/.local/bin/multi-cli',
+    );
+    expect(environment['MULTICLI_TERMINAL_ARGC'], '4');
+    expect(environment['MULTICLI_TERMINAL_ARG_0'], 'launch');
+    expect(environment['MULTICLI_TERMINAL_ARG_3'], 'bora asai');
+    expect(environment['MULTICLI_TERMINAL_TITLE'], 'ari · bora asai');
+    expect(environment, isNot(contains('MULTICLI_TERMINAL_ARG_9')));
+    expect(environment, isNot(contains('NO_COLOR')));
   });
 
   test('interactive terminals restore color and use a compact title', () {

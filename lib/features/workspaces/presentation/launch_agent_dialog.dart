@@ -768,6 +768,7 @@ bool canLaunchAccount(AccountCardData account) {
 }
 
 String _accountSubtitle(AccountCardData account, ProfileProvider provider) {
+  if (account.isDeactivated) return 'Desactivada en este equipo';
   if (!account.profile.isAvailable) return 'Perfil no disponible';
   if (!account.profile.hasAuthFile && provider.supportsDeviceAuth) {
     return 'Cuenta sin vincular';
