@@ -17,11 +17,18 @@ import 'package:uuid/uuid.dart';
 Future<void> showCreateProfileDialog(
   BuildContext context,
   DashboardController controller,
-) => showDialog<void>(
-  context: context,
-  barrierDismissible: false,
-  builder: (_) => _CreateProfileDialog(controller: controller),
-);
+) async {
+  final created = await showDialog<AccountCardData>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _CreateProfileDialog(controller: controller),
+  );
+  if (created == null || !context.mounted) return;
+  final provider = profileProvider(created.profile.toolKey);
+  if (provider.supportsDeviceAuth && !created.profile.hasAuthFile) {
+    await showDeviceAuthDialog(context, controller, created);
+  }
+}
 
 Future<void> showEditAccountDialog(
   BuildContext context,
@@ -42,6 +49,37 @@ Future<void> showRenameProfileDialog(
   builder: (_) =>
       _RenameProfileDialog(controller: controller, account: account),
 );
+
+Future<bool> showCodexHeartbeatConfirmation(
+  BuildContext context,
+  AccountCardData account,
+) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.monitor_heart_outlined),
+        title: Text('Enviar heartbeat a ${account.profile.displayName}'),
+        content: const SizedBox(
+          width: 430,
+          child: Text(
+            'Codex procesará una consulta mínima real. Esto consume una pequeña '
+            'parte de la cuota y luego se verificará el ancla de reinicio.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.play_arrow_rounded, size: 18),
+            label: const Text('Enviar'),
+          ),
+        ],
+      ),
+    ) ??
+    false;
 
 Future<void> showDeleteProfileDialog(
   BuildContext context,
@@ -152,7 +190,7 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
       error = null;
     });
     try {
-      await widget.controller.createProfile(
+      var created = await widget.controller.createProfile(
         ProfileCreateRequest(
           toolKey: toolKey,
           name: name.text,
@@ -161,22 +199,18 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
           seedFromBase: false,
         ),
       );
-      final created = widget.controller.accounts
-          .where(
-            (item) =>
-                item.profile.toolKey == toolKey &&
-                item.profile.profileName == name.text.trim(),
-          )
-          .firstOrNull;
-      if (created != null && displayName.text.trim().isNotEmpty) {
+      if (displayName.text.trim().isNotEmpty) {
         await widget.controller.multiCli.saveDisplayData(
           profile: created.profile,
           displayName: displayName.text,
           favorite: false,
         );
         await widget.controller.reload();
+        created = widget.controller.accounts
+            .where((item) => item.profile.id == created.profile.id)
+            .first;
       }
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, created);
     } catch (exception) {
       if (mounted) setState(() => error = _cleanError(exception));
     } finally {
@@ -189,6 +223,7 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
     final provider = profileProvider(toolKey);
     final alias = name.text.trim().isEmpty ? 'alias' : name.text.trim();
     return AlertDialog(
+      scrollable: true,
       title: const Text('Nuevo perfil'),
       content: SizedBox(
         width: 540,
@@ -290,6 +325,63 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 11,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerLow,
+                  border: Border(
+                    left: BorderSide(
+                      width: 3,
+                      color: provider.supportsDeviceAuth
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      provider.supportsDeviceAuth
+                          ? Icons.phonelink_lock_outlined
+                          : Icons.login,
+                      size: 19,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            provider.supportsDeviceAuth
+                                ? 'Acceso mediante Codex Device Auth'
+                                : 'Acceso de Claude Code',
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            provider.supportsDeviceAuth
+                                ? 'Antes de continuar, abre Configuración > Seguridad en ChatGPT y habilita el acceso mediante código de dispositivo. Después de crear el perfil se abrirá el navegador y aparecerá el código para vincular la cuenta.'
+                                : 'La vinculación automática todavía no está disponible para Claude. Después de crear el perfil, ábrelo y completa el acceso desde Claude Code.',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
                   vertical: 9,
                 ),
                 decoration: BoxDecoration(
@@ -341,7 +433,11 @@ class _CreateProfileDialogState extends State<_CreateProfileDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.add, size: 18),
-          label: Text('Crear en ${provider.displayName}'),
+          label: Text(
+            provider.supportsDeviceAuth
+                ? 'Crear y vincular'
+                : 'Crear en ${provider.displayName}',
+          ),
         ),
       ],
     );
@@ -1309,7 +1405,29 @@ class _DeviceAuthDialogState extends State<_DeviceAuthDialog> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_openBrowser());
+    });
     unawaited(_wait());
+  }
+
+  Future<void> _openBrowser() async {
+    try {
+      await launchUrl(
+        Uri.parse(widget.session.verificationUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // The dialog keeps an explicit browser button as a reliable fallback.
+    }
+  }
+
+  Future<void> _copy(String value, String confirmation) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(confirmation)));
   }
 
   Future<void> _wait() async {
@@ -1345,6 +1463,7 @@ class _DeviceAuthDialogState extends State<_DeviceAuthDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AlertDialog(
+      scrollable: true,
       title: Text('Vincular ${widget.account.profile.displayName}'),
       content: SizedBox(
         width: 500,
@@ -1366,23 +1485,93 @@ class _DeviceAuthDialogState extends State<_DeviceAuthDialog> {
                 color: theme.colorScheme.primary,
               ),
             ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.security_outlined,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      'Primero, en ChatGPT abre Configuración > Seguridad y habilita el acceso mediante código de dispositivo.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '1. Copia el código.  2. Inicia sesión con la cuenta que quieres vincular.  '
+              '3. Ingresa el código, confirma el acceso y regresa aquí.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '¿No se abrió el navegador? Copia el enlace:',
+                style: theme.textTheme.labelMedium,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(10, 7, 3, 7),
+              decoration: BoxDecoration(
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      widget.session.verificationUrl,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Copiar enlace',
+                    onPressed: () => _copy(
+                      widget.session.verificationUrl,
+                      'Enlace copiado.',
+                    ),
+                    icon: const Icon(Icons.copy, size: 18),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 14),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => Clipboard.setData(
-                    ClipboardData(text: widget.session.userCode),
-                  ),
+                  onPressed: () =>
+                      _copy(widget.session.userCode, 'Código copiado.'),
                   icon: const Icon(Icons.copy, size: 17),
                   label: const Text('Copiar código'),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.icon(
-                  onPressed: () => launchUrl(
-                    Uri.parse(widget.session.verificationUrl),
-                    mode: LaunchMode.externalApplication,
-                  ),
+                  onPressed: _openBrowser,
                   icon: const Icon(Icons.open_in_new, size: 17),
                   label: const Text('Abrir navegador'),
                 ),

@@ -29,6 +29,13 @@ enum UsageCheckState {
   };
 }
 
+enum UsageIssue {
+  network,
+  credentialExpired,
+  credentialInvalidated,
+  partialMetadata,
+}
+
 class DiscoveredProfile {
   const DiscoveredProfile({
     required this.toolKey,
@@ -104,6 +111,7 @@ class CodexRefreshResult {
     this.accountDisplayName,
     this.errorCode,
     this.errorMessage,
+    this.rateLimitsReadSucceeded = false,
     this.windows = const [],
     this.dailyUsage = const [],
     this.resetCredits = 0,
@@ -118,6 +126,7 @@ class CodexRefreshResult {
   final String? accountDisplayName;
   final String? errorCode;
   final String? errorMessage;
+  final bool rateLimitsReadSucceeded;
   final List<QuotaSnapshot> windows;
   final List<DailyUsageSnapshot> dailyUsage;
   final int resetCredits;
@@ -147,16 +156,46 @@ class AccountCardData {
   final List<QuotaWindow> lastSuccessfulWindows;
   final ResetCreditSnapshot? resetCredits;
 
+  bool get isDeactivated => profile.profileType == 'deactivated';
+
   UsageCheckState? get currentState => currentCheck == null
       ? null
       : UsageCheckState.fromStorage(currentCheck!.status);
+
+  UsageIssue? get currentIssue {
+    final check = currentCheck;
+    if (check == null) return null;
+    final code = check.errorCode?.toUpperCase();
+    final message = check.errorMessage?.toLowerCase() ?? '';
+    if (code == 'TOKEN_INVALIDATED' ||
+        message.contains('token_invalidated') ||
+        message.contains('token has been invalidated')) {
+      return UsageIssue.credentialInvalidated;
+    }
+    if (code == 'TOKEN_EXPIRED' ||
+        message.contains('token_expired') ||
+        message.contains('token is expired')) {
+      return UsageIssue.credentialExpired;
+    }
+    if (code == 'NETWORK_ERROR' ||
+        message.contains('error sending request') ||
+        message.contains('connection reset') ||
+        message.contains('connection refused') ||
+        message.contains('failed host lookup')) {
+      return UsageIssue.network;
+    }
+    if (code == 'PARTIAL_METADATA') return UsageIssue.partialMetadata;
+    return null;
+  }
 
   bool get currentIsUsable =>
       currentState == UsageCheckState.success ||
       currentState == UsageCheckState.partial;
 
   List<QuotaWindow> get visibleWindows =>
-      currentIsUsable ? currentWindows : lastSuccessfulWindows;
+      currentIsUsable && currentWindows.isNotEmpty
+      ? currentWindows
+      : lastSuccessfulWindows;
 
   double? get lowestAvailablePercent {
     double? lowest;

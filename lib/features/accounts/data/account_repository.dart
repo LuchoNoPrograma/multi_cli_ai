@@ -40,7 +40,7 @@ class AccountRepository {
       final current = checks.firstOrNull;
       UsageCheck? successful;
       for (final check in checks) {
-        if (check.status == 'success' || check.status == 'partial') {
+        if (check.status == 'success') {
           successful = check;
           break;
         }

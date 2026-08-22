@@ -62,32 +62,33 @@ class ProfileDiscoveryService {
       }
 
       final providerRoot = Directory(p.join(root, provider.multiCliTool));
-      if (!await providerRoot.exists()) continue;
-      final entries = await providerRoot
-          .list(followLinks: false)
-          .where((entry) => entry is Directory)
-          .cast<Directory>()
-          .toList();
-      entries.sort((a, b) => a.path.compareTo(b.path));
-      for (final directory in entries) {
-        final name = p.basename(directory.path);
-        if (name.startsWith('.')) continue;
-        final type = await File(p.join(directory.path, '.shared')).exists()
-            ? 'shared'
-            : await File(p.join(directory.path, '.cli')).exists()
-            ? 'cli'
-            : 'full';
-        discovered.add(
-          _profile(
-            provider: provider,
-            name: name,
-            home: directory.path,
-            source: 'multicli',
-            type: type,
-            command: provider.commandName(name),
-            display: _title(name),
-          ),
-        );
+      if (await providerRoot.exists()) {
+        final entries = await providerRoot
+            .list(followLinks: false)
+            .where((entry) => entry is Directory)
+            .cast<Directory>()
+            .toList();
+        entries.sort((a, b) => a.path.compareTo(b.path));
+        for (final directory in entries) {
+          final name = p.basename(directory.path);
+          if (name.startsWith('.')) continue;
+          final type = await File(p.join(directory.path, '.shared')).exists()
+              ? 'shared'
+              : await File(p.join(directory.path, '.cli')).exists()
+              ? 'cli'
+              : 'full';
+          discovered.add(
+            _profile(
+              provider: provider,
+              name: name,
+              home: directory.path,
+              source: 'multicli',
+              type: type,
+              command: provider.commandName(name),
+              display: _title(name),
+            ),
+          );
+        }
       }
     }
 
@@ -96,6 +97,17 @@ class ProfileDiscoveryService {
         await (database.update(database.cliProfiles)
               ..where((row) => row.toolKey.equals(provider.toolKey)))
             .write(const CliProfilesCompanion(isAvailable: Value(false)));
+        await (database.update(database.cliProfiles)..where(
+              (row) =>
+                  row.toolKey.equals(provider.toolKey) &
+                  row.profileSource.equals('multicli'),
+            ))
+            .write(
+              const CliProfilesCompanion(
+                profileType: Value('deactivated'),
+                hasAuthFile: Value(false),
+              ),
+            );
       }
       for (final item in discovered) {
         final existingByPath =

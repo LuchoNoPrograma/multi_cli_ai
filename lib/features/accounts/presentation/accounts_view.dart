@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,19 +25,18 @@ class AccountsView extends ConsumerWidget {
     final controller = ref.watch(dashboardControllerProvider);
     final ready = controller.accounts.where((item) {
       final provider = profileProvider(item.profile.toolKey);
-      return provider.supportsUsage
+      return item.profile.isAvailable && provider.supportsUsage
           ? item.currentIsUsable
           : item.profile.isAvailable && item.profile.hasAuthFile;
     }).length;
     final attention = controller.accounts.where((item) {
       final provider = profileProvider(item.profile.toolKey);
       final state = item.currentState;
-      return provider.supportsUsage
-          ? state != null && !item.currentIsUsable
-          : !item.profile.isAvailable;
+      return !item.profile.isAvailable ||
+          (provider.supportsUsage && state != null && !item.currentIsUsable);
     }).length;
     final unlinked = controller.accounts
-        .where((item) => !item.profile.hasAuthFile)
+        .where((item) => item.profile.isAvailable && !item.profile.hasAuthFile)
         .length;
     final recent = controller.accounts
         .map((item) => item.currentCheck?.startedAt)
@@ -435,6 +436,30 @@ class _AccountCardState extends State<AccountCard> {
     }
   }
 
+  Future<void> _startHeartbeat() async {
+    final confirmed = await showCodexHeartbeatConfirmation(
+      context,
+      widget.account,
+    );
+    if (!confirmed || !mounted) return;
+    try {
+      final message = await widget.controller.startCodexHeartbeat(
+        widget.account,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -445,6 +470,7 @@ class _AccountCardState extends State<AccountCard> {
     final windows = account.visibleWindows
         .take(widget.compact ? 1 : 2)
         .toList();
+    final windowTitles = _quotaWindowTitles(windows);
     return MouseRegion(
       onEnter: (_) => setState(() => hovered = true),
       onExit: (_) => setState(() => hovered = false),
@@ -585,12 +611,39 @@ class _AccountCardState extends State<AccountCard> {
                           widget.controller,
                           account,
                         );
+                      } else if (value == 'heartbeat') {
+                        unawaited(_startHeartbeat());
                       }
                     },
                     itemBuilder: (context) => [
+                      if (account.profile.toolKey == 'codex')
+                        PopupMenuItem(
+                          value: 'heartbeat',
+                          enabled:
+                              account.profile.isAvailable &&
+                              account.profile.hasAuthFile &&
+                              !widget.refreshing,
+                          height: 38,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.monitor_heart_outlined, size: 15),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Enviar heartbeat',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       PopupMenuItem(
                         value: 'rename',
-                        enabled: account.profile.profileSource == 'multicli',
+                        enabled:
+                            account.profile.profileSource == 'multicli' &&
+                            !account.isDeactivated,
                         height: 38,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: const Row(
@@ -609,7 +662,9 @@ class _AccountCardState extends State<AccountCard> {
                       ),
                       PopupMenuItem(
                         value: 'delete',
-                        enabled: account.profile.profileSource == 'multicli',
+                        enabled:
+                            account.profile.profileSource == 'multicli' &&
+                            !account.isDeactivated,
                         height: 38,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Row(
@@ -635,7 +690,8 @@ class _AccountCardState extends State<AccountCard> {
                 ),
               ],
             ),
-            if (!account.currentIsUsable) ...[
+            if (account.isDeactivated ||
+                account.currentState != UsageCheckState.success) ...[
               const SizedBox(height: 5),
               _StateLine(account: account, color: stateColor, showBadge: false),
             ],
@@ -665,12 +721,15 @@ class _AccountCardState extends State<AccountCard> {
             if (windows.isEmpty)
               _NoUsageData(account: account)
             else
-              ...windows.map((window) => _QuotaBar(window: window)),
+              for (var index = 0; index < windows.length; index++)
+                _QuotaBar(window: windows[index], title: windowTitles[index]),
             const Spacer(),
             Row(
               children: [
                 Expanded(child: _BillingLine(account: account)),
-                if (!account.profile.hasAuthFile && provider.supportsDeviceAuth)
+                if (!account.isDeactivated &&
+                    !account.profile.hasAuthFile &&
+                    provider.supportsDeviceAuth)
                   AppIconButton(
                     icon: Icons.link,
                     tooltip: 'Vincular cuenta',
@@ -844,10 +903,59 @@ class _NoUsageData extends StatelessWidget {
   }
 }
 
+List<String> _quotaWindowTitles(List<QuotaWindow> windows) {
+  final baseTitles = [
+    for (final window in windows)
+      formatQuotaWindowLabel(window.windowDurationMinutes, window.windowType),
+  ];
+
+  return [
+    for (var index = 0; index < windows.length; index++)
+      if (baseTitles.where((title) => title == baseTitles[index]).length == 1)
+        baseTitles[index]
+      else
+        '${_quotaWindowQualifier(windows[index], windows, baseTitles[index], baseTitles)} · ${baseTitles[index]}',
+  ];
+}
+
+String _quotaWindowQualifier(
+  QuotaWindow window,
+  List<QuotaWindow> windows,
+  String baseTitle,
+  List<String> baseTitles,
+) {
+  final colliding = [
+    for (var index = 0; index < windows.length; index++)
+      if (baseTitles[index] == baseTitle) windows[index],
+  ];
+  String source(QuotaWindow item) =>
+      _nonEmpty(item.limitName) ?? _nonEmpty(item.limitId) ?? '';
+  final preferredSources = colliding.map(source).toList();
+  if (_areDistinct(preferredSources)) return source(window);
+
+  final limitIds = colliding.map((item) => item.limitId.trim()).toList();
+  if (_areDistinct(limitIds)) return window.limitId.trim();
+
+  final sourceLabel = source(window);
+  if (sourceLabel.isEmpty) return window.windowType;
+  final windowTypeLabel = formatQuotaWindowLabel(null, window.windowType);
+  return '$sourceLabel · $windowTypeLabel';
+}
+
+String? _nonEmpty(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
+
+bool _areDistinct(List<String> values) =>
+    values.every((value) => value.isNotEmpty) &&
+    values.map((value) => value.toLowerCase()).toSet().length == values.length;
+
 class _QuotaBar extends StatelessWidget {
-  const _QuotaBar({required this.window});
+  const _QuotaBar({required this.window, required this.title});
 
   final QuotaWindow window;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -861,10 +969,6 @@ class _QuotaBar extends StatelessWidget {
         : remaining <= 25
         ? theme.colorScheme.tertiary
         : theme.colorScheme.primary;
-    final title = formatQuotaWindowLabel(
-      window.windowDurationMinutes,
-      window.windowType,
-    );
     final reset = window.resetsAt == null
         ? null
         : 'Reinicia en ${formatTimeRemaining(window.resetsAt!)}';
@@ -880,6 +984,9 @@ class _QuotaBar extends StatelessWidget {
                     Flexible(
                       child: Text(
                         title,
+                        key: ValueKey(
+                          'quota-title-${window.limitId}-${window.windowType}',
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.labelMedium?.copyWith(
@@ -994,6 +1101,9 @@ class _BillingLine extends StatelessWidget {
 
 Color _stateColor(BuildContext context, AccountCardData account) {
   final provider = profileProvider(account.profile.toolKey);
+  if (account.isDeactivated) {
+    return Theme.of(context).colorScheme.onSurfaceVariant;
+  }
   if (!account.profile.isAvailable) return Theme.of(context).colorScheme.error;
   if (!account.profile.hasAuthFile) {
     return Theme.of(context).colorScheme.onSurfaceVariant;
@@ -1009,12 +1119,13 @@ Color _stateColor(BuildContext context, AccountCardData account) {
 
 String _stateLabel(AccountCardData account) {
   final provider = profileProvider(account.profile.toolKey);
+  if (account.isDeactivated) return 'DESACTIVADA';
   if (!account.profile.isAvailable) return 'NO DISPONIBLE';
   if (!account.profile.hasAuthFile) return 'SIN VINCULAR';
   if (!provider.supportsUsage) return 'LISTA';
   return switch (account.currentState) {
     UsageCheckState.success => 'ACTIVA',
-    UsageCheckState.partial => 'PARCIAL',
+    UsageCheckState.partial => 'ATENCIÓN',
     UsageCheckState.timeout => 'TIEMPO AGOTADO',
     UsageCheckState.authRequired => 'REQUIERE ACCESO',
     UsageCheckState.toolMissing => 'CLI AUSENTE',
@@ -1028,6 +1139,9 @@ String _stateLabel(AccountCardData account) {
 String _stateDetail(AccountCardData account) {
   final provider = profileProvider(account.profile.toolKey);
   final check = account.currentCheck;
+  if (account.isDeactivated) {
+    return 'Este perfil no está activo en el equipo';
+  }
   if (!account.profile.isAvailable) return 'La carpeta del perfil ya no existe';
   if (!account.profile.hasAuthFile) {
     return 'Credencial administrada por multi-cli';
@@ -1036,6 +1150,24 @@ String _stateDetail(AccountCardData account) {
     return '${provider.productName} disponible para abrir';
   }
   if (check == null) return 'Aún no se consultó el app-server';
+  final issueDetail = switch (account.currentIssue) {
+    UsageIssue.network =>
+      account.lastSuccessfulWindows.isNotEmpty
+          ? 'Falló la conexión; se muestra el último dato válido'
+          : 'No se pudo conectar con ChatGPT',
+    UsageIssue.credentialExpired =>
+      'La credencial venció; vuelve a iniciar sesión',
+    UsageIssue.credentialInvalidated =>
+      'ChatGPT revocó la credencial; vuelve a vincularla',
+    UsageIssue.partialMetadata =>
+      account.currentWindows.isNotEmpty
+          ? 'Se obtuvieron cuotas, pero faltan datos complementarios'
+          : account.lastSuccessfulWindows.isNotEmpty
+          ? 'Sin cuotas nuevas; se muestra el último dato válido'
+          : 'Codex no devolvió ventanas de cuota',
+    null => null,
+  };
+  if (issueDetail != null) return issueDetail;
   if (account.currentIsUsable) {
     final count = account.visibleWindows.length;
     return '$count ${count == 1 ? 'ventana oficial' : 'ventanas oficiales'}';

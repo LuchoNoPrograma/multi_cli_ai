@@ -49,20 +49,20 @@ class CodexAppServerClient {
       Object? limitsError;
       Object? usageError;
       await Future.wait([
-        rpc
-            .request('account/rateLimits/read')
-            .then((value) => limits = value)
-            .catchError((Object error) {
-              limitsError = error;
-              return <String, dynamic>{};
-            }),
-        rpc
-            .request('account/usage/read')
-            .then((value) => usage = value)
-            .catchError((Object error) {
-              usageError = error;
-              return <String, dynamic>{};
-            }),
+        _requestMetadata(
+          rpc,
+          'account/rateLimits/read',
+        ).then((value) => limits = value).catchError((Object error) {
+          limitsError = error;
+          return <String, dynamic>{};
+        }),
+        _requestMetadata(
+          rpc,
+          'account/usage/read',
+        ).then((value) => usage = value).catchError((Object error) {
+          usageError = error;
+          return <String, dynamic>{};
+        }),
       ]);
 
       final windows = parseQuotaWindows(limits ?? const {});
@@ -74,20 +74,30 @@ class CodexAppServerClient {
         const {'planType', 'plan_type', 'plan'},
       );
       final hasAnyMetadata = windows.isNotEmpty || daily.isNotEmpty;
+      final metadataFailureCode = _metadataFailureCode(limitsError, usageError);
+      final authenticationFailed =
+          metadataFailureCode == 'TOKEN_EXPIRED' ||
+          metadataFailureCode == 'TOKEN_INVALIDATED' ||
+          metadataFailureCode == 'AUTH_REQUIRED';
       final partial =
           limitsError != null || usageError != null || !hasAnyMetadata;
       return CodexRefreshResult(
-        state: partial ? UsageCheckState.partial : UsageCheckState.success,
+        state: authenticationFailed
+            ? UsageCheckState.authRequired
+            : partial
+            ? UsageCheckState.partial
+            : UsageCheckState.success,
         startedAt: started,
         completedAt: DateTime.now().toUtc(),
         planType: plan,
         accountEmail: identity.$1,
         accountDisplayName: identity.$2,
+        rateLimitsReadSucceeded: limitsError == null,
         windows: windows,
         dailyUsage: daily,
         resetCredits: credits.$1,
         nextCreditExpiry: credits.$2,
-        errorCode: partial ? 'PARTIAL_METADATA' : null,
+        errorCode: metadataFailureCode ?? (partial ? 'PARTIAL_METADATA' : null),
         errorMessage: partial
             ? _joinErrors(limitsError, usageError, hasAnyMetadata)
             : null,
@@ -195,6 +205,45 @@ class CodexAppServerClient {
     errorCode: code,
     errorMessage: message,
   );
+
+  static Future<Map<String, dynamic>> _requestMetadata(
+    _CodexRpcProcess rpc,
+    String method,
+  ) async {
+    try {
+      return await rpc.request(method);
+    } catch (error) {
+      if (!_isTransientMetadataError(error)) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return rpc.request(method);
+    }
+  }
+
+  static bool _isTransientMetadataError(Object? error) {
+    final message = error?.toString().toLowerCase() ?? '';
+    return message.contains('error sending request') ||
+        message.contains('connection reset') ||
+        message.contains('connection refused') ||
+        message.contains('temporary failure') ||
+        message.contains('failed host lookup');
+  }
+
+  static String? _metadataFailureCode(Object? limits, Object? usage) {
+    final message = '$limits\n$usage'.toLowerCase();
+    if (message.contains('token_invalidated') ||
+        message.contains('authentication token has been invalidated')) {
+      return 'TOKEN_INVALIDATED';
+    }
+    if (message.contains('token_expired') ||
+        message.contains('authentication token is expired')) {
+      return 'TOKEN_EXPIRED';
+    }
+    if (message.contains('401 unauthorized')) return 'AUTH_REQUIRED';
+    if (_isTransientMetadataError(limits) || _isTransientMetadataError(usage)) {
+      return 'NETWORK_ERROR';
+    }
+    return null;
+  }
 
   static bool _hasAccount(Map<String, dynamic> result) {
     if (result['account'] == null && result.containsKey('account')) {

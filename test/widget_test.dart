@@ -730,8 +730,14 @@ void main() {
     await tester.tap(find.text('Abrir creación'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Crear en ChatGPT'), findsOneWidget);
-    final primaryButton = find.widgetWithText(FilledButton, 'Crear en ChatGPT');
+    expect(find.text('Crear y vincular'), findsOneWidget);
+    expect(find.text('Acceso mediante Codex Device Auth'), findsOneWidget);
+    expect(find.textContaining('Configuración > Seguridad'), findsOneWidget);
+    expect(
+      find.textContaining('habilita el acceso mediante código de dispositivo'),
+      findsOneWidget,
+    );
+    final primaryButton = find.widgetWithText(FilledButton, 'Crear y vincular');
     expect(tester.getSize(primaryButton).height, greaterThanOrEqualTo(38));
     InputDecoration aliasDecoration() => tester
         .widget<InputDecorator>(
@@ -771,6 +777,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Crear en Claude'), findsOneWidget);
+    expect(find.text('Acceso de Claude Code'), findsOneWidget);
+    expect(
+      find.textContaining('vinculación automática todavía no está disponible'),
+      findsOneWidget,
+    );
+    expect(find.text('Acceso mediante Codex Device Auth'), findsNothing);
     expect(find.text('multi-cli new claude-cli/alias'), findsOneWidget);
     expect(aliasDecoration().prefixText, 'claude-cli-');
     expect(tester.takeException(), isNull);
@@ -990,6 +1002,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Más acciones'));
     await tester.pumpAndSettle();
+    expect(find.text('Enviar heartbeat'), findsOneWidget);
     expect(find.text('Renombrar alias físico'), findsOneWidget);
     expect(find.text('Eliminar perfil'), findsOneWidget);
     expect(
@@ -1005,7 +1018,11 @@ void main() {
       AppTheme.dark('cyan').colorScheme.onSurfaceVariant,
     );
     expect(tester.takeException(), isNull);
-    await tester.tapAt(const Offset(4, 4));
+    await tester.tap(find.text('Enviar heartbeat'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enviar heartbeat a Ari'), findsOneWidget);
+    expect(find.textContaining('consulta mínima real'), findsOneWidget);
+    await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Elegir destino'), findsNothing);
@@ -1119,6 +1136,68 @@ void main() {
 
     expect(find.text('Ventana de 5 h'), findsOneWidget);
     expect(find.text('Límite semanal'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    final reserveAccount = AccountCardData(
+      profile: account.profile,
+      metadata: account.metadata,
+      costShares: account.costShares,
+      currentCheck: check,
+      currentWindows: [
+        QuotaWindow(
+          id: 'codex-weekly',
+          checkId: check.id,
+          limitId: 'codex',
+          limitName: 'Codex',
+          windowType: 'primary',
+          usedPercent: 0,
+          windowDurationMinutes: 10080,
+          resetsAt: now.add(const Duration(days: 7)),
+        ),
+        QuotaWindow(
+          id: 'reserve-weekly',
+          checkId: check.id,
+          limitId: 'gpt-reserve',
+          windowType: 'primary',
+          usedPercent: 54,
+          windowDurationMinutes: 10080,
+          resetsAt: now.add(const Duration(days: 5, hours: 15)),
+        ),
+      ],
+      lastSuccessfulCheck: check,
+      lastSuccessfulWindows: const [],
+      resetCredits: null,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark('cyan'),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 460,
+              height: 280,
+              child: AccountCard(
+                account: reserveAccount,
+                refreshing: false,
+                compact: false,
+                controller: controller,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final codexQuotaTitle = tester.widget<Text>(
+      find.byKey(const ValueKey('quota-title-codex-primary')),
+    );
+    final reserveQuotaTitle = tester.widget<Text>(
+      find.byKey(const ValueKey('quota-title-gpt-reserve-primary')),
+    );
+    expect(codexQuotaTitle.data, contains('Codex'));
+    expect(reserveQuotaTitle.data, contains('gpt-reserve'));
+    expect(codexQuotaTitle.data, isNot(reserveQuotaTitle.data));
     expect(tester.takeException(), isNull);
   });
 

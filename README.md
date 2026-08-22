@@ -45,6 +45,8 @@ Multi CLI continúa siendo el motor de perfiles utilizado por esta aplicación.
 - Consulta la identidad, el plan y las cuotas reales disponibles para Codex.
 - Actualiza todas las cuentas con concurrencia acotada y diferencia el estado
   actual del último resultado exitoso.
+- Puede iniciar en segundo plano una ventana semanal de Codex que siga casi
+  intacta, con una consulta breve y deduplicada por cuenta.
 - Registra compras, precios, monedas, ciclos de facturación y próximas
   renovaciones.
 - Organiza pagos compartidos, aportes pendientes y notas por suscripción.

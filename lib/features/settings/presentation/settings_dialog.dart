@@ -28,6 +28,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late double concurrency = widget.controller.concurrency.toDouble();
   late double timeout = widget.controller.timeoutSeconds.toDouble();
   late bool compact = widget.controller.compactCards;
+  late bool weeklyKeepAlive = widget.controller.weeklyKeepAliveEnabled;
   final root = TextEditingController();
   bool loadingRoot = true;
   bool saving = false;
@@ -63,6 +64,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
         concurrency: concurrency.round(),
         timeoutSeconds: timeout.round(),
         compactCards: compact,
+        weeklyKeepAliveEnabled: weeklyKeepAlive,
         profilesRoot: root.text,
       );
       if (mounted) Navigator.pop(context);
@@ -212,6 +214,17 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                 divisions: 11,
                 label: '${timeout.round()} s',
                 onChanged: (value) => setState(() => timeout = value),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: weeklyKeepAlive,
+                onChanged: (value) => setState(() => weeklyKeepAlive = value),
+                title: const Text('Iniciar semanas de Codex'),
+                subtitle: const Text(
+                  'Comprueba una vez al iniciar. Después revisa cada cuenta '
+                  'sólo al acercarse a su reinicio, al confirmar un ancla '
+                  'ambigua o al reintentar con backoff.',
+                ),
               ),
               Text(
                 'La concurrencia está acotada para no abrir demasiados app-server '

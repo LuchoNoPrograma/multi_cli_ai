@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:multi_cli_ai/core/database/app_database.dart';
 import 'package:multi_cli_ai/core/process/process_runner.dart';
 import 'package:multi_cli_ai/features/accounts/domain/account_models.dart';
+import 'package:multi_cli_ai/features/usage/data/codex_weekly_keep_alive_service.dart';
 import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
 import 'package:uuid/uuid.dart';
 
@@ -15,19 +16,19 @@ class UsageRefreshService {
     required this.database,
     required this.client,
     required this.runner,
+    this.keepAlive,
   });
 
   final AppDatabase database;
   CodexAppServerClient client;
   final ProcessRunner runner;
+  final CodexWeeklyKeepAliveService? keepAlive;
   final Uuid _uuid = const Uuid();
 
   Future<CodexRefreshResult> refreshProfile(CliProfile profile) async {
     final result = await client.refresh(profile.profileHome);
     await _persist(profile, result);
-    final status =
-        result.state == UsageCheckState.success ||
-            result.state == UsageCheckState.partial
+    final status = result.state == UsageCheckState.success
         ? 'success'
         : 'error';
     final detail =
@@ -40,6 +41,7 @@ class UsageRefreshService {
       profileId: profile.id,
       command: 'codex app-server metadata',
     );
+    keepAlive?.scheduleIfEligible(profile, result);
     return result;
   }
 

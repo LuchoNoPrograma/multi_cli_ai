@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:multi_cli_ai/core/database/app_database.dart';
 import 'package:multi_cli_ai/core/process/process_runner.dart';
@@ -8,6 +6,7 @@ import 'package:multi_cli_ai/features/accounts/domain/account_models.dart';
 import 'package:multi_cli_ai/features/profiles/data/multi_cli_gateway.dart';
 import 'package:multi_cli_ai/features/profiles/data/profile_discovery_service.dart';
 import 'package:multi_cli_ai/features/profiles/domain/profile_provider.dart';
+import 'package:multi_cli_ai/features/usage/data/codex_weekly_keep_alive_service.dart';
 import 'package:multi_cli_ai/features/usage/data/usage_refresh_service.dart';
 import 'package:multi_cli_ai/features/workspaces/data/workspace_repository.dart';
 import 'package:multi_cli_ai/providers/codex/codex_app_server_client.dart';
@@ -98,6 +97,7 @@ class DashboardController extends ChangeNotifier {
   double fontScale = .9;
   String fontFamilyPreference = 'system';
   bool compactCards = false;
+  bool weeklyKeepAliveEnabled = true;
 
   List<AccountCardData> get visibleAccounts {
     final search = query.trim().toLowerCase();
@@ -109,16 +109,16 @@ class DashboardController extends ChangeNotifier {
           account.displayEmail.toLowerCase().contains(search);
       final state = account.currentState;
       final provider = profileProvider(account.profile.toolKey);
-      final ready = provider.supportsUsage
+      final ready = account.profile.isAvailable && provider.supportsUsage
           ? state == UsageCheckState.success || state == UsageCheckState.partial
           : account.profile.isAvailable && account.profile.hasAuthFile;
       final matchesState = switch (statusFilter) {
         'ready' => ready,
         'attention' =>
-          provider.supportsUsage
-              ? state != null && !ready
-              : !account.profile.isAvailable,
-        'unlinked' => !account.profile.hasAuthFile,
+          !account.profile.isAvailable ||
+              (provider.supportsUsage && state != null && !ready),
+        'unlinked' =>
+          account.profile.isAvailable && !account.profile.hasAuthFile,
         _ => true,
       };
       return matchesSearch && matchesState;
@@ -206,6 +206,7 @@ class DashboardController extends ChangeNotifier {
     } finally {
       loading = false;
       notifyListeners();
+      if (initialized) _syncWeeklyScheduler();
     }
   }
 
@@ -219,6 +220,7 @@ class DashboardController extends ChangeNotifier {
         !workspaces.any((workspace) => workspace.id == currentWorkspaceId)) {
       currentWorkspaceId = workspaces.firstOrNull?.id;
     }
+    if (initialized) _syncWeeklyScheduler();
     notifyListeners();
   }
 
@@ -228,24 +230,39 @@ class DashboardController extends ChangeNotifier {
   }
 
   Future<void> refreshOne(AccountCardData account) async {
-    if (!profileProvider(account.profile.toolKey).supportsUsage) {
+    if (refreshing.contains(account.profile.id)) return;
+    await rescanProfiles();
+    final current = accounts
+        .where((item) => item.profile.id == account.profile.id)
+        .firstOrNull;
+    if (current == null || !current.profile.isAvailable) {
       throw StateError(
-        '${profileProvider(account.profile.toolKey).productName} todavía no expone cuotas en esta aplicación.',
+        current?.isDeactivated == true
+            ? 'La cuenta está desactivada en este equipo. '
+                  'No se realizó ninguna consulta.'
+            : 'El perfil ya no está disponible en este equipo. '
+                  'No se realizó ninguna consulta.',
       );
     }
-    if (refreshing.contains(account.profile.id)) return;
-    refreshing = {...refreshing, account.profile.id};
+    if (!profileProvider(current.profile.toolKey).supportsUsage) {
+      throw StateError(
+        '${profileProvider(current.profile.toolKey).productName} todavía no expone cuotas en esta aplicación.',
+      );
+    }
+    refreshing = {...refreshing, current.profile.id};
     notifyListeners();
     try {
-      await usage.refreshProfile(account.profile);
+      await usage.refreshProfile(current.profile);
       await reload();
     } finally {
-      refreshing = {...refreshing}..remove(account.profile.id);
+      refreshing = {...refreshing}..remove(current.profile.id);
       notifyListeners();
     }
   }
 
   Future<void> refreshAll() async {
+    if (refreshing.isNotEmpty) return;
+    await rescanProfiles();
     final targets = accounts
         .where(
           (item) =>
@@ -253,7 +270,7 @@ class DashboardController extends ChangeNotifier {
               profileProvider(item.profile.toolKey).supportsUsage,
         )
         .toList();
-    if (targets.isEmpty || refreshing.isNotEmpty) return;
+    if (targets.isEmpty) return;
     refreshing = targets.map((item) => item.profile.id).toSet();
     notifyListeners();
     try {
@@ -272,17 +289,78 @@ class DashboardController extends ChangeNotifier {
     }
   }
 
-  Future<void> createProfile(ProfileCreateRequest request) async {
+  Future<String> startCodexHeartbeat(AccountCardData account) async {
+    final keepAlive = usage.keepAlive;
+    if (keepAlive == null || account.profile.toolKey != 'codex') {
+      throw StateError('El heartbeat sólo está disponible para Codex.');
+    }
+    if (!account.profile.isAvailable || !account.profile.hasAuthFile) {
+      throw StateError('La cuenta debe estar disponible y vinculada.');
+    }
+    if (refreshing.contains(account.profile.id)) {
+      throw StateError('La cuenta ya tiene una operación en curso.');
+    }
+
+    int? expectedWindowMinutes;
+    for (final window in account.visibleWindows) {
+      final duration = window.windowDurationMinutes;
+      if (duration != null &&
+          (duration - CodexWeeklyKeepAliveService.weeklyMinutes).abs() <= 60) {
+        expectedWindowMinutes = duration;
+        break;
+      }
+      if (window.limitId.toLowerCase() == 'codex') {
+        expectedWindowMinutes ??= duration;
+      }
+    }
+
+    refreshing = {...refreshing, account.profile.id};
+    notifyListeners();
+    try {
+      final result = await keepAlive.runNow(
+        account.profile,
+        expectedWindowMinutes: expectedWindowMinutes,
+      );
+      if (result.outcome == KeepAliveOutcome.failed ||
+          result.outcome == KeepAliveOutcome.skipped) {
+        throw StateError(result.message);
+      }
+      await usage.refreshProfile(account.profile);
+      await reload();
+      return result.message;
+    } finally {
+      refreshing = {...refreshing}..remove(account.profile.id);
+      notifyListeners();
+    }
+  }
+
+  Future<AccountCardData> createProfile(ProfileCreateRequest request) async {
+    final profileName = MultiCliGateway.validateName(request.name);
     await multiCli.create(request);
     await rescanProfiles();
+    return accounts.firstWhere(
+      (item) =>
+          item.profile.toolKey == request.toolKey &&
+          item.profile.profileName == profileName &&
+          item.profile.profileSource == 'multicli',
+      orElse: () => throw StateError(
+        'El perfil fue creado, pero no apareció después de redescubrirlo.',
+      ),
+    );
   }
 
   Future<void> renameProfile(AccountCardData account, String name) async {
+    if (account.isDeactivated) {
+      throw StateError('La cuenta está desactivada en este equipo.');
+    }
     await multiCli.rename(account.profile, name);
     await rescanProfiles();
   }
 
   Future<void> deleteProfile(AccountCardData account) async {
+    if (account.isDeactivated) {
+      throw StateError('La cuenta está desactivada en este equipo.');
+    }
     await multiCli.delete(account.profile);
     if (selectedProfileId == account.profile.id) selectedProfileId = null;
     await rescanProfiles();
@@ -456,6 +534,7 @@ class DashboardController extends ChangeNotifier {
     required int concurrency,
     required int timeoutSeconds,
     required bool compactCards,
+    required bool weeklyKeepAliveEnabled,
     required String profilesRoot,
   }) async {
     themePreference = theme;
@@ -465,6 +544,8 @@ class DashboardController extends ChangeNotifier {
     this.concurrency = concurrency.clamp(1, 6);
     this.timeoutSeconds = timeoutSeconds.clamp(5, 60);
     this.compactCards = compactCards;
+    this.weeklyKeepAliveEnabled = weeklyKeepAliveEnabled;
+    usage.keepAlive?.enabled = weeklyKeepAliveEnabled;
     await Future.wait([
       database.saveSetting('theme', theme),
       database.saveSetting('accent', accent),
@@ -473,12 +554,17 @@ class DashboardController extends ChangeNotifier {
       database.saveSetting('concurrency', this.concurrency.toString()),
       database.saveSetting('timeout_seconds', this.timeoutSeconds.toString()),
       database.saveSetting('compact_cards', compactCards.toString()),
+      database.saveSetting(
+        'weekly_keep_alive_enabled',
+        weeklyKeepAliveEnabled.toString(),
+      ),
       database.saveSetting('profiles_root_path', profilesRoot.trim()),
     ]);
     usage.client = CodexAppServerClient(
       timeout: Duration(seconds: this.timeoutSeconds),
     );
     await rescanProfiles();
+    _syncWeeklyScheduler();
     notifyListeners();
   }
 
@@ -499,9 +585,26 @@ class DashboardController extends ChangeNotifier {
     timeoutSeconds =
         int.tryParse(await database.setting('timeout_seconds') ?? '') ?? 15;
     compactCards = (await database.setting('compact_cards')) == 'true';
+    weeklyKeepAliveEnabled =
+        (await database.setting('weekly_keep_alive_enabled')) != 'false';
+    usage.keepAlive?.enabled = weeklyKeepAliveEnabled;
     final storedWorkspace = await database.setting('current_workspace_id');
     currentWorkspaceId = storedWorkspace?.trim().isEmpty == false
         ? storedWorkspace
         : null;
+  }
+
+  void _syncWeeklyScheduler() {
+    final keepAlive = usage.keepAlive;
+    final profiles = accounts
+        .where(
+          (account) =>
+              account.profile.toolKey == 'codex' &&
+              account.profile.isAvailable &&
+              account.profile.hasAuthFile,
+        )
+        .map((account) => account.profile)
+        .toList();
+    keepAlive?.monitorProfiles(profiles);
   }
 }
